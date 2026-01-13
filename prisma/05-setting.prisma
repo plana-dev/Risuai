@@ -1,0 +1,101 @@
+
+// ============================================
+// 5. 서비스 설정 (서비스 전체 기본 설정)
+// ============================================
+
+model ServiceSettings {
+  id            String   @id @default("default") @db.VarChar(50) // 단일 레코드만 존재
+
+  // AI 기본 설정
+  defaultAiModel    String?  @map("default_ai_model") @db.VarChar(255)
+  defaultSubModel   String?  @map("default_sub_model") @db.VarChar(255)
+  temperature       Int      @default(80)
+  maxContext        Int      @default(4000) @map("max_context")
+  maxResponse       Int      @default(500) @map("max_response")
+  frequencyPenalty  Int      @default(70) @map("frequency_penalty")
+  presencePenalty   Int      @default(70) @map("presence_penalty")
+  top_p             Decimal? @map("top_p") @db.Decimal(5, 2)
+  top_k             Int?     @map("top_k")
+  repetition_penalty Decimal? @map("repetition_penalty") @db.Decimal(5, 2)
+  min_p             Decimal? @map("min_p") @db.Decimal(5, 2)
+  top_a             Decimal? @map("top_a") @db.Decimal(5, 2)
+  
+  // 프롬프트 기본 설정
+  mainPrompt        String?  @map("main_prompt") @db.Text
+  jailbreak         String?  @db.Text
+  globalNote        String?  @map("global_note") @db.Text
+  additionalPrompt  String?  @map("additional_prompt") @db.Text
+  descriptionPrefix String?  @map("description_prefix") @db.Text
+  formatingOrder    String[] @map("formating_order") @default([])
+  jailbreakToggle   Boolean  @default(false) @map("jailbreak_toggle")
+  
+  // UI 기본 설정
+  zoomsize          Int      @default(100)
+  iconsize          Int      @default(100)
+  customBackgroundUrl String? @map("custom_background_url") @db.Text
+  textTheme         String   @default("standard") @map("text_theme") @db.VarChar(50)
+  customTextTheme   Json?    @map("custom_text_theme")
+  font              String?  @default("default") @db.VarChar(50)
+  customFont        String?  @map("custom_font") @db.VarChar(255)
+  lineHeight        Decimal? @map("line_height") @db.Decimal(4, 2)
+  waifuWidth        Int      @default(100) @map("waifu_width")
+  waifuWidth2       Int      @default(100) @map("waifu_width2")
+  swipe             Boolean  @default(true)
+  sendWithEnter     Boolean  @default(true) @map("send_with_enter")
+  fixedChatTextarea Boolean  @default(false) @map("fixed_chat_textarea")
+  clickToEdit       Boolean  @default(false) @map("click_to_edit")
+  fullScreen        Boolean  @default(false) @map("full_screen")
+  roundIcons        Boolean  @default(false) @map("round_icons")
+  classicMaxWidth   Boolean  @default(false) @map("classic_max_width")
+  useChatCopy       Boolean  @default(false) @map("use_chat_copy")
+  useChatSticker    Boolean  @default(false) @map("use_chat_sticker")
+  useAdditionalAssetsPreview Boolean @default(false) @map("use_additional_assets_preview")
+  menuSideBar       Boolean  @default(false) @map("menu_side_bar")
+  showMenuChatList  Boolean  @default(false) @map("show_menu_chat_list")
+  sideMenuRerollButton Boolean @default(false) @map("side_menu_reroll_button")
+  requestInfoInsideChat Boolean @default(false) @map("request_info_inside_chat")
+  promptInfoInsideChat Boolean @default(false) @map("prompt_info_inside_chat")
+  promptTextInfoInsideChat Boolean @default(false) @map("prompt_text_info_inside_chat")
+  showSavingIcon    Boolean  @default(false) @map("show_saving_icon")
+  showPromptComparison Boolean @default(false) @map("show_prompt_comparison")
+  showFirstMessagePages Boolean @default(false) @map("show_first_message_pages")
+  showMenuHypaMemoryModal Boolean @default(false) @map("show_menu_hypa_memory_modal")
+  showTranslationLoading Boolean @default(false) @map("show_translation_loading")
+  showDeprecatedTriggerV1 Boolean @default(false) @map("show_deprecated_trigger_v1")
+  showDeprecatedTriggerV2 Boolean @default(false) @map("show_deprecated_trigger_v2")
+  hideRealm         Boolean  @default(false) @map("hide_realm")
+  hideApiKey        Boolean  @default(true) @map("hide_api_key")
+  hideAllImages     Boolean  @default(false) @map("hide_all_images")
+  enableScrollToActiveChar Boolean @default(true) @map("enable_scroll_to_active_char")
+  autoScrollToNewMessage Boolean @default(true) @map("auto_scroll_to_new_message")
+  alwaysScrollToNewMessage Boolean @default(false) @map("always_scroll_to_new_message")
+  newMessageButtonStyle String? @map("new_message_button_style") @db.VarChar(50)
+  settingsCloseButtonSize Int @default(24) @map("settings_close_button_size")
+  textAreaSize      Int      @default(0) @map("text_area_size")
+  sideBarSize       Int      @default(0) @map("side_bar_size")
+  textAreaTextSize  Int      @default(0) @map("text_area_text_size")
+  assetWidth        Int      @default(-1) @map("asset_width")
+  animationSpeed    Decimal  @default(0.4) @map("animation_speed") @db.Decimal(3, 2)
+  assetMaxDifference Int     @default(4) @map("asset_max_difference")
+  heightMode        String   @default("normal") @map("height_mode") @db.VarChar(50)
+  
+  // 테마 및 색상 기본 설정
+  colorScheme       Json?    @map("color_scheme") // ColorScheme
+  colorSchemeName   String?  @map("color_scheme_name") @db.VarChar(50)
+  customCSS         String?  @map("custom_css") @db.Text
+  customGUI         String?  @map("custom_gui") @db.Text
+  guiHTML           String?  @map("gui_html") @db.Text
+  useLegacyGUI      Boolean  @default(false) @map("use_legacy_gui")
+  betaMobileGUI     Boolean  @default(false) @map("beta_mobile_gui")
+  
+  // 기본 프리셋 ID
+  defaultPresetId   String?  @map("default_preset_id") @db.VarChar(255)
+  
+  // 고급 설정 (JSONB) - 나머지 모든 기본 설정
+  advancedSettings  Json?    @map("advanced_settings")
+  
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  @@map("service_settings")
+}

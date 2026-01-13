@@ -1,0 +1,99 @@
+
+// ============================================
+// 8. 서비스 제공 모델/프리셋/메모리/TTS
+// ============================================
+
+model ServiceModel {
+  id                String   @id @default(uuid()) @db.Uuid
+  modelId           String   @unique @map("model_id") @db.VarChar(255)
+  name              String   @db.VarChar(255)
+  provider          String   @db.VarChar(100) // 'openai', 'anthropic', 'google' 등
+  modelType         String   @map("model_type") @db.VarChar(50) // 'chat'|'memory'|'emotion'|'translate'
+  
+  // 설정 (JSONB)
+  config            Json     // 모델별 설정 (endpoint, apiKey 등)
+  
+  isAvailable       Boolean  @default(true) @map("is_available")
+  isPremium         Boolean  @default(false) @map("is_premium")
+  
+  // 제한
+  maxTokens         Int?     @map("max_tokens")
+  rateLimitPerMinute Int?   @map("rate_limit_per_minute")
+  
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  userSelections    UserModelSelection[]
+  
+  @@map("service_models")
+  @@index([modelType])
+  @@index([isAvailable])
+}
+
+model ServicePreset {
+  id                String   @id @default(uuid()) @db.Uuid
+  presetId          String   @unique @map("preset_id") @db.VarChar(255)
+  name              String   @db.VarChar(255)
+  description       String?  @db.Text
+  imageUrl          String?  @map("image_url") @db.Text
+  
+  // 프리셋 설정 (JSONB) - botPreset 인터페이스 전체
+  presetData        Json     @map("preset_data")
+  
+  isDefault         Boolean  @default(false) @map("is_default")
+  isAvailable       Boolean  @default(true) @map("is_available")
+  isPremium         Boolean  @default(false) @map("is_premium")
+  
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  @@map("service_presets")
+  @@index([isDefault])
+  @@index([isAvailable])
+}
+
+model UserModelSelection {
+  userId    String   @map("user_id") @db.Uuid
+  modelType String   @map("model_type") @db.VarChar(50) // 'chat'|'memory'|'emotion'|'translate'|'preset'|'tts'|'imagegen'
+  modelId   String   @map("model_id") @db.VarChar(255) // ServiceModel.modelId 또는 ServicePreset.presetId
+  
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model     ServiceModel? @relation(fields: [modelId], references: [modelId], onDelete: Cascade)
+  // Note: preset은 ServicePreset.presetId를 modelId에 저장 (관계는 별도 처리)
+  
+  @@id([userId, modelType])
+  @@map("user_model_selections")
+  @@index([modelId])
+}
+
+model MemoryServiceConfig {
+  id            String   @id @default(uuid()) @db.Uuid
+  serviceName   String   @unique @map("service_name") @db.VarChar(100) // 'supamemory'|'hypav2'|'hypav3'|'hanurai'
+  config        Json     // 각 메모리 타입별 설정
+  isAvailable   Boolean  @default(true) @map("is_available")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  @@map("memory_service_configs")
+}
+
+model TTSServiceConfig {
+  id            String   @id @default(uuid()) @db.Uuid
+  serviceName   String   @unique @map("service_name") @db.VarChar(100) // 'openai'|'elevenlabs'|'voicevox'|'naitts'
+  config        Json     // TTS 서비스별 설정
+  isAvailable   Boolean  @default(true) @map("is_available")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  @@map("tts_service_configs")
+}
+
+model ImageGenServiceConfig {
+  id            String   @id @default(uuid()) @db.Uuid
+  serviceName   String   @unique @map("service_name") @db.VarChar(100) // 'stable-diffusion'|'dalle'|'novelai'
+  config        Json     // 이미지 생성 서비스별 설정
+  isAvailable   Boolean  @default(true) @map("is_available")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  @@map("image_gen_service_configs")
+}

@@ -1,0 +1,108 @@
+
+// ============================================
+// 2. 캐릭터 관리
+// ============================================
+
+model Character {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  chaId                 String   @unique @map("cha_id") @db.VarChar(255)
+  
+  // 기본 정보
+  name                  String   @db.VarChar(255)
+  description           String?  @db.Text
+  personality           String?  @db.Text
+  scenario              String?  @db.Text
+  firstMessage          String   @map("first_message") @db.Text
+  notes                 String?  @db.Text
+  creatorNotes          String?  @map("creator_notes") @db.Text
+  systemPrompt          String?  @map("system_prompt") @db.Text
+  postHistoryInstructions String? @map("post_history_instructions") @db.Text
+  exampleMessage        String?  @map("example_message") @db.Text
+  additionalText        String?  @map("additional_text") @db.Text
+  replaceGlobalNote     String?  @map("replace_global_note") @db.Text
+  translatorNote        String?  @map("translator_note") @db.Text
+  
+  // 이미지 및 에셋
+  imageUrl              String?  @map("image_url") @db.Text
+  
+  // 메타데이터
+  characterVersion      String?  @map("character_version") @db.VarChar(50)
+  creator               String?  @db.VarChar(255)
+  tags                  String[] @default([])
+  license               String?  @db.VarChar(100)
+  isPrivate             Boolean  @default(true) @map("is_private")
+  isPublished           Boolean  @default(false) @map("is_published")
+  
+  // 설정
+  viewScreen            String   @default("none") @map("view_screen") @db.VarChar(50)
+  utilityBot            Boolean  @default(false) @map("utility_bot")
+  ttsMode               String?  @map("tts_mode") @db.VarChar(50)
+  ttsSpeech             String?  @map("tts_speech") @db.Text
+  ttsReadOnlyQuoted     Boolean  @default(false) @map("tts_read_only_quoted")
+  chatPage              Int      @default(0) @map("chat_page")
+  firstMsgIndex         Int      @default(0) @map("first_msg_index")
+  removedQuotes         Boolean  @default(false) @map("removed_quotes")
+  largePortrait         Boolean  @default(false) @map("large_portrait")
+  lorePlus              Boolean  @default(false) @map("lore_plus")
+  inlayViewScreen       Boolean  @default(false) @map("inlay_view_screen")
+  lowLevelAccess        Boolean  @default(false) @map("low_level_access")
+  hideChatIcon          Boolean  @default(false) @map("hide_chat_icon")
+  doNotChangeSeperateModels Boolean @default(false) @map("do_not_change_seperate_models")
+  escapeOutput          Boolean  @default(false) @map("escape_output")
+  prebuiltAssetCommand  Boolean  @default(false) @map("prebuilt_asset_command")
+  supaMemory            Boolean  @default(false) @map("supa_memory")
+  
+  // JSONB 필드 (복잡한 데이터 구조)
+  emotionImages         Json?    @map("emotion_images") // [string, string][]
+  additionalAssets      Json?    @map("additional_assets") // [string, string, string][]
+  sdData                Json?    @map("sd_data") // [string, string][]
+  bias                  Json?    // [string, number][]
+  alternateGreetings    String[] @map("alternate_greetings") @default([])
+  customScript          Json?    @map("custom_script") // customscript[]
+  triggerScript         Json?    @map("trigger_script") // triggerscript[]
+  voiceConfig           Json?    @map("voice_config") // voicevoxConfig, naittsConfig 등
+  loreSettings          Json?    @map("lore_settings") // loreSettings
+  newGenData            Json?    @map("new_gen_data")
+  loreExt               Json?    @map("lore_ext")
+  additionalData        Json?    @map("additional_data")
+  depthPrompt           Json?    @map("depth_prompt")
+  extentions            Json?    // {[key:string]:any}
+  scriptstate           Json?    // {[key:string]:string|number|boolean}
+  backgroundHTML        String?  @map("background_html") @db.Text
+  backgroundCSS         String?  @map("background_css") @db.Text
+  reloadKeys            Int?     @map("reload_keys")
+  virtualscript         String?  @db.Text
+  defaultVariables      String?  @map("default_variables") @db.Text
+  prebuiltAssetStyle    String?  @map("prebuilt_asset_style") @db.VarChar(255)
+  prebuiltAssetExclude  String[] @map("prebuilt_asset_exclude") @default([])
+  modules               String[] @default([])
+  nickname              String?  @db.VarChar(255)
+  source                String[] @default([])
+  groupOnlyGreetings    String[] @map("group_only_greetings") @default([])
+  ccAssets              Json?    @map("cc_assets")
+  realmId               String?  @map("realm_id") @db.VarChar(255)
+  imported              Boolean  @default(false)
+  trashTime             Int?     @map("trash_time")
+  creationDate          Int?     @map("creation_date")
+  modificationDate      Int?     @map("modification_date")
+  lastInteraction       Int?     @map("last_interaction")
+  
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  lastInteractionAt     DateTime? @map("last_interaction_at")
+  
+  // Relations
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chats                 Chat[]
+  lorebooks             Lorebook[]
+  chatFolders           ChatFolder[]
+  assets                Asset[]
+  marketplaceCharacter  MarketplaceCharacter?
+  
+  @@map("characters")
+  @@index([userId])
+  @@index([chaId])
+  @@index([isPublished])
+  @@index([tags], type: Gin)
+}

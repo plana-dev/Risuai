@@ -1,0 +1,649 @@
+// ============================================
+// 1. 사용자 및 인증
+// ============================================
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  email        String  @unique @db.VarChar(255)
+  username     String  @db.VarChar(100)
+  passwordHash String  @map("password_hash") @db.VarChar(255)
+  avatarUrl    String? @map("avatar_url") @db.Text
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  lastLoginAt      DateTime? @map("last_login_at")
+  isActive         Boolean   @default(true) @map("is_active")
+  subscriptionTier String    @default("free") @map("subscription_tier") @db.VarChar(50)
+
+  // Relations
+  sessions        UserSession[]
+  characters      Character[]
+  chats           Chat[]
+  userSettings    UserSettings?
+  persona         Persona?
+  assets          Asset[]
+  reviews         MarketplaceReview[]
+  modelSelections UserModelSelection[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model UserSession {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @unique @map("token_hash") @db.VarChar(255)
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  deviceInfo Json?    @map("device_info")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("user_sessions")
+}
+
+model Persona {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @map("user_id") @db.Uuid
+  name          String   @db.VarChar(255)
+  personaPrompt String?  @map("persona_prompt") @db.Text
+  iconUrl       String?  @map("icon_url") @db.Text
+  note          String?  @db.Text
+  largePortrait Boolean  @default(false) @map("large_portrait")
+  personaNote   Boolean  @default(false) @map("persona_note")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("personas")
+}
+
+model UserSettings {
+  userId String @id @map("user_id") @db.Uuid
+
+  // 유저 개인 설정 (서비스에서 제공하지 않는 개인화 설정)
+  username      String? @db.VarChar(100)
+  userIconUrl   String? @map("user_icon_url") @db.Text
+  userNote      String? @map("user_note") @db.Text
+  language      String  @default("en") @db.VarChar(10)
+  theme         String? @db.VarChar(50)
+  didFirstSetup Boolean @default(false) @map("did_first_setup")
+
+  // 유저 개인 고급 설정 (JSONB) - 개인화된 설정만 저장
+  // 예: 개인화된 UI 설정 오버라이드, 개인화된 키바인딩 등
+  customSettings Json? @map("custom_settings")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+// ============================================
+// 2. 캐릭터 관리
+// ============================================
+
+model Character {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  chaId  String @unique @map("cha_id") @db.VarChar(255)
+
+  // 기본 정보
+  name                    String  @db.VarChar(255)
+  description             String? @db.Text
+  personality             String? @db.Text
+  scenario                String? @db.Text
+  firstMessage            String  @map("first_message") @db.Text
+  notes                   String? @db.Text
+  creatorNotes            String? @map("creator_notes") @db.Text
+  systemPrompt            String? @map("system_prompt") @db.Text
+  postHistoryInstructions String? @map("post_history_instructions") @db.Text
+  exampleMessage          String? @map("example_message") @db.Text
+  additionalText          String? @map("additional_text") @db.Text
+  replaceGlobalNote       String? @map("replace_global_note") @db.Text
+  translatorNote          String? @map("translator_note") @db.Text
+
+  // 이미지 및 에셋
+  imageUrl String? @map("image_url") @db.Text
+
+  // 메타데이터
+  characterVersion String?  @map("character_version") @db.VarChar(50)
+  creator          String?  @db.VarChar(255)
+  tags             String[] @default([])
+  license          String?  @db.VarChar(100)
+  isPrivate        Boolean  @default(true) @map("is_private")
+  isPublished      Boolean  @default(false) @map("is_published")
+
+  // 설정
+  viewScreen                String  @default("none") @map("view_screen") @db.VarChar(50)
+  utilityBot                Boolean @default(false) @map("utility_bot")
+  ttsMode                   String? @map("tts_mode") @db.VarChar(50)
+  ttsSpeech                 String? @map("tts_speech") @db.Text
+  ttsReadOnlyQuoted         Boolean @default(false) @map("tts_read_only_quoted")
+  chatPage                  Int     @default(0) @map("chat_page")
+  firstMsgIndex             Int     @default(0) @map("first_msg_index")
+  removedQuotes             Boolean @default(false) @map("removed_quotes")
+  largePortrait             Boolean @default(false) @map("large_portrait")
+  lorePlus                  Boolean @default(false) @map("lore_plus")
+  inlayViewScreen           Boolean @default(false) @map("inlay_view_screen")
+  lowLevelAccess            Boolean @default(false) @map("low_level_access")
+  hideChatIcon              Boolean @default(false) @map("hide_chat_icon")
+  doNotChangeSeperateModels Boolean @default(false) @map("do_not_change_seperate_models")
+  escapeOutput              Boolean @default(false) @map("escape_output")
+  prebuiltAssetCommand      Boolean @default(false) @map("prebuilt_asset_command")
+  supaMemory                Boolean @default(false) @map("supa_memory")
+
+  // JSONB 필드 (복잡한 데이터 구조)
+  emotionImages        Json?    @map("emotion_images") // [string, string][]
+  additionalAssets     Json?    @map("additional_assets") // [string, string, string][]
+  sdData               Json?    @map("sd_data") // [string, string][]
+  bias                 Json? // [string, number][]
+  alternateGreetings   String[] @default([]) @map("alternate_greetings")
+  customScript         Json?    @map("custom_script") // customscript[]
+  triggerScript        Json?    @map("trigger_script") // triggerscript[]
+  voiceConfig          Json?    @map("voice_config") // voicevoxConfig, naittsConfig 등
+  loreSettings         Json?    @map("lore_settings") // loreSettings
+  newGenData           Json?    @map("new_gen_data")
+  loreExt              Json?    @map("lore_ext")
+  additionalData       Json?    @map("additional_data")
+  depthPrompt          Json?    @map("depth_prompt")
+  extentions           Json? // {[key:string]:any}
+  scriptstate          Json? // {[key:string]:string|number|boolean}
+  backgroundHTML       String?  @map("background_html") @db.Text
+  backgroundCSS        String?  @map("background_css") @db.Text
+  reloadKeys           Int?     @map("reload_keys")
+  virtualscript        String?  @db.Text
+  defaultVariables     String?  @map("default_variables") @db.Text
+  prebuiltAssetStyle   String?  @map("prebuilt_asset_style") @db.VarChar(255)
+  prebuiltAssetExclude String[] @default([]) @map("prebuilt_asset_exclude")
+  modules              String[] @default([])
+  nickname             String?  @db.VarChar(255)
+  source               String[] @default([])
+  groupOnlyGreetings   String[] @default([]) @map("group_only_greetings")
+  ccAssets             Json?    @map("cc_assets")
+  realmId              String?  @map("realm_id") @db.VarChar(255)
+  imported             Boolean  @default(false)
+  trashTime            Int?     @map("trash_time")
+  creationDate         Int?     @map("creation_date")
+  modificationDate     Int?     @map("modification_date")
+  lastInteraction      Int?     @map("last_interaction")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  lastInteractionAt DateTime? @map("last_interaction_at")
+
+  // Relations
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chats                Chat[]
+  lorebooks            Lorebook[]
+  chatFolders          ChatFolder[]
+  assets               Asset[]
+  marketplaceCharacter MarketplaceCharacter?
+
+  @@index([userId])
+  @@index([chaId])
+  @@index([isPublished])
+  @@index([tags], type: Gin)
+  @@map("characters")
+}
+
+// ============================================
+// 3. 채팅 및 메시지
+// ============================================
+
+model Chat {
+  id          String  @id @default(uuid()) @db.Uuid
+  characterId String  @map("character_id") @db.Uuid
+  userId      String  @map("user_id") @db.Uuid
+  name        String? @db.VarChar(255)
+  note        String? @db.Text
+  folderId    String? @map("folder_id") @db.Uuid
+
+  // 메모리 데이터 (JSONB)
+  supaMemoryData String? @map("supa_memory_data") @db.Text
+  hypaV2Data     Json?   @map("hypa_v2_data")
+  hypaV3Data     Json?   @map("hypa_v3_data")
+  lastMemory     String? @map("last_memory") @db.Text
+
+  // 스크립트 상태
+  scriptState Json? @map("script_state") // {[key:string]:string|number|boolean}
+
+  // 기타 필드
+  sdData          String?  @map("sd_data") @db.Text
+  suggestMessages String[] @default([]) @map("suggest_messages")
+  isStreaming     Boolean  @default(false) @map("is_streaming")
+  modules         String[] @default([])
+  bindedPersona   String?  @map("binded_persona") @db.VarChar(255)
+  fmIndex         Int?     @map("fm_index")
+  bookmarks       String[] @default([])
+  bookmarkNames   Json?    @map("bookmark_names") // { [chatId: string]: string }
+
+  // 메타데이터
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  lastDate  DateTime? @map("last_date")
+
+  // Relations
+  character Character   @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  lorebooks Lorebook[]
+  folder    ChatFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  @@index([characterId, userId])
+  @@index([folderId])
+  @@map("chats")
+}
+
+model Message {
+  id     String   @id @default(uuid()) @db.Uuid
+  chatId String   @map("chat_id") @db.Uuid
+  role   String   @db.VarChar(20) // 'user' | 'char'
+  data   String   @db.Text
+  saying String?  @db.VarChar(255) // 그룹 채팅에서 캐릭터 ID
+  name   String?  @db.VarChar(255)
+  time   DateTime @default(now())
+
+  // 생성 정보 (JSONB)
+  generationInfo Json? @map("generation_info") // MessageGenerationInfo
+  promptInfo     Json? @map("prompt_info") // MessagePresetInfo
+
+  // 상태
+  disabled  Boolean @default(false)
+  isComment Boolean @default(false) @map("is_comment")
+  otherUser Boolean @default(false) @map("other_user")
+
+  // 순서
+  messageIndex Int @map("message_index")
+
+  // Relations
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, messageIndex])
+  @@index([chatId])
+  @@index([time])
+  @@map("messages")
+}
+
+model ChatFolder {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  characterId String?  @map("character_id") @db.Uuid
+  name        String?  @db.VarChar(255)
+  color       String?  @db.VarChar(50)
+  folded      Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  character Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  chats     Chat[]
+
+  @@index([userId, characterId])
+  @@map("chat_folders")
+}
+
+// ============================================
+// 4. 로어북
+// ============================================
+
+model Lorebook {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String? @map("user_id") @db.Uuid
+  characterId String? @map("character_id") @db.Uuid
+  chatId      String? @map("chat_id") @db.Uuid
+
+  name      String? @db.VarChar(255)
+  key       String  @db.Text
+  secondKey String? @map("second_key") @db.Text
+  content   String  @db.Text
+  comment   String? @db.Text
+
+  // 설정
+  mode              String  @default("normal") @db.VarChar(50) // 'multiple'|'constant'|'normal'|'child'|'folder'
+  insertOrder       Int     @default(0) @map("insert_order")
+  alwaysActive      Boolean @default(false) @map("always_active")
+  selective         Boolean @default(false)
+  useRegex          Boolean @default(false) @map("use_regex")
+  activationPercent Int?    @map("activation_percent")
+
+  // 확장 (JSONB)
+  extensions  Json?
+  loreCache   Json?   @map("lore_cache")
+  folder      String? @db.VarChar(255)
+  bookVersion Int?    @map("book_version")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  character Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  chat      Chat?      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  // Note: Gin 인덱스는 마이그레이션에서 수동으로 추가 필요
+  // CREATE INDEX lorebooks_key_gin_idx ON lorebooks USING gin (key gin_trgm_ops);
+
+  @@index([characterId])
+  @@index([chatId])
+  @@map("lorebooks")
+}
+
+// ============================================
+// 5. 서비스 설정 (서비스 전체 기본 설정)
+// ============================================
+
+model ServiceSettings {
+  id String @id @default("default") @db.VarChar(50) // 단일 레코드만 존재
+
+  // AI 기본 설정
+  defaultAiModel     String?  @map("default_ai_model") @db.VarChar(255)
+  defaultSubModel    String?  @map("default_sub_model") @db.VarChar(255)
+  temperature        Int      @default(80)
+  maxContext         Int      @default(4000) @map("max_context")
+  maxResponse        Int      @default(500) @map("max_response")
+  frequencyPenalty   Int      @default(70) @map("frequency_penalty")
+  presencePenalty    Int      @default(70) @map("presence_penalty")
+  top_p              Decimal? @map("top_p") @db.Decimal(5, 2)
+  top_k              Int?     @map("top_k")
+  repetition_penalty Decimal? @map("repetition_penalty") @db.Decimal(5, 2)
+  min_p              Decimal? @map("min_p") @db.Decimal(5, 2)
+  top_a              Decimal? @map("top_a") @db.Decimal(5, 2)
+
+  // 프롬프트 기본 설정
+  mainPrompt        String?  @map("main_prompt") @db.Text
+  jailbreak         String?  @db.Text
+  globalNote        String?  @map("global_note") @db.Text
+  additionalPrompt  String?  @map("additional_prompt") @db.Text
+  descriptionPrefix String?  @map("description_prefix") @db.Text
+  formatingOrder    String[] @default([]) @map("formating_order")
+  jailbreakToggle   Boolean  @default(false) @map("jailbreak_toggle")
+
+  // UI 기본 설정
+  zoomsize                   Int      @default(100)
+  iconsize                   Int      @default(100)
+  customBackgroundUrl        String?  @map("custom_background_url") @db.Text
+  textTheme                  String   @default("standard") @map("text_theme") @db.VarChar(50)
+  customTextTheme            Json?    @map("custom_text_theme")
+  font                       String?  @default("default") @db.VarChar(50)
+  customFont                 String?  @map("custom_font") @db.VarChar(255)
+  lineHeight                 Decimal? @map("line_height") @db.Decimal(4, 2)
+  waifuWidth                 Int      @default(100) @map("waifu_width")
+  waifuWidth2                Int      @default(100) @map("waifu_width2")
+  swipe                      Boolean  @default(true)
+  sendWithEnter              Boolean  @default(true) @map("send_with_enter")
+  fixedChatTextarea          Boolean  @default(false) @map("fixed_chat_textarea")
+  clickToEdit                Boolean  @default(false) @map("click_to_edit")
+  fullScreen                 Boolean  @default(false) @map("full_screen")
+  roundIcons                 Boolean  @default(false) @map("round_icons")
+  classicMaxWidth            Boolean  @default(false) @map("classic_max_width")
+  useChatCopy                Boolean  @default(false) @map("use_chat_copy")
+  useChatSticker             Boolean  @default(false) @map("use_chat_sticker")
+  useAdditionalAssetsPreview Boolean  @default(false) @map("use_additional_assets_preview")
+  menuSideBar                Boolean  @default(false) @map("menu_side_bar")
+  showMenuChatList           Boolean  @default(false) @map("show_menu_chat_list")
+  sideMenuRerollButton       Boolean  @default(false) @map("side_menu_reroll_button")
+  requestInfoInsideChat      Boolean  @default(false) @map("request_info_inside_chat")
+  promptInfoInsideChat       Boolean  @default(false) @map("prompt_info_inside_chat")
+  promptTextInfoInsideChat   Boolean  @default(false) @map("prompt_text_info_inside_chat")
+  showSavingIcon             Boolean  @default(false) @map("show_saving_icon")
+  showPromptComparison       Boolean  @default(false) @map("show_prompt_comparison")
+  showFirstMessagePages      Boolean  @default(false) @map("show_first_message_pages")
+  showMenuHypaMemoryModal    Boolean  @default(false) @map("show_menu_hypa_memory_modal")
+  showTranslationLoading     Boolean  @default(false) @map("show_translation_loading")
+  showDeprecatedTriggerV1    Boolean  @default(false) @map("show_deprecated_trigger_v1")
+  showDeprecatedTriggerV2    Boolean  @default(false) @map("show_deprecated_trigger_v2")
+  hideRealm                  Boolean  @default(false) @map("hide_realm")
+  hideApiKey                 Boolean  @default(true) @map("hide_api_key")
+  hideAllImages              Boolean  @default(false) @map("hide_all_images")
+  enableScrollToActiveChar   Boolean  @default(true) @map("enable_scroll_to_active_char")
+  autoScrollToNewMessage     Boolean  @default(true) @map("auto_scroll_to_new_message")
+  alwaysScrollToNewMessage   Boolean  @default(false) @map("always_scroll_to_new_message")
+  newMessageButtonStyle      String?  @map("new_message_button_style") @db.VarChar(50)
+  settingsCloseButtonSize    Int      @default(24) @map("settings_close_button_size")
+  textAreaSize               Int      @default(0) @map("text_area_size")
+  sideBarSize                Int      @default(0) @map("side_bar_size")
+  textAreaTextSize           Int      @default(0) @map("text_area_text_size")
+  assetWidth                 Int      @default(-1) @map("asset_width")
+  animationSpeed             Decimal  @default(0.4) @map("animation_speed") @db.Decimal(3, 2)
+  assetMaxDifference         Int      @default(4) @map("asset_max_difference")
+  heightMode                 String   @default("normal") @map("height_mode") @db.VarChar(50)
+
+  // 테마 및 색상 기본 설정
+  colorScheme     Json?   @map("color_scheme") // ColorScheme
+  colorSchemeName String? @map("color_scheme_name") @db.VarChar(50)
+  customCSS       String? @map("custom_css") @db.Text
+  customGUI       String? @map("custom_gui") @db.Text
+  guiHTML         String? @map("gui_html") @db.Text
+  useLegacyGUI    Boolean @default(false) @map("use_legacy_gui")
+  betaMobileGUI   Boolean @default(false) @map("beta_mobile_gui")
+
+  // 기본 프리셋 ID
+  defaultPresetId String? @map("default_preset_id") @db.VarChar(255)
+
+  // 고급 설정 (JSONB) - 나머지 모든 기본 설정
+  advancedSettings Json? @map("advanced_settings")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("service_settings")
+}
+
+// ============================================
+// 6. 에셋 관리 (Supabase Storage)
+// ============================================
+
+model Asset {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String  @map("user_id") @db.Uuid
+  characterId String? @map("character_id") @db.Uuid
+
+  // 파일 정보
+  name     String  @db.VarChar(255)
+  type     String  @db.VarChar(50) // 'image'|'video'|'audio'|'emotion'|'other'
+  mimeType String? @map("mime_type") @db.VarChar(100)
+  fileSize BigInt  @map("file_size")
+
+  // Supabase Storage 경로
+  storagePath   String @map("storage_path") @db.Text
+  storageBucket String @default("reluv-assets") @map("storage_bucket") @db.VarChar(100)
+
+  // 메타데이터
+  width    Int?
+  height   Int?
+  duration Int? // 비디오/오디오 길이 (초)
+
+  // 태그 및 분류
+  tags     String[] @default([])
+  isPublic Boolean  @default(false) @map("is_public")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([userId, characterId])
+  @@index([type])
+  @@index([isPublic])
+  @@map("assets")
+}
+
+// ============================================
+// 7. 마켓플레이스
+// ============================================
+
+model MarketplaceCharacter {
+  characterId String @id @map("character_id") @db.Uuid
+
+  // 마켓 정보
+  title        String   @db.VarChar(255)
+  description  String?  @db.Text
+  thumbnailUrl String?  @map("thumbnail_url") @db.Text
+  category     String?  @db.VarChar(100)
+  tags         String[] @default([])
+
+  // 통계
+  viewCount     Int     @default(0) @map("view_count")
+  downloadCount Int     @default(0) @map("download_count")
+  ratingAverage Decimal @default(0) @map("rating_average") @db.Decimal(3, 2)
+  ratingCount   Int     @default(0) @map("rating_count")
+
+  // 상태
+  isFeatured Boolean @default(false) @map("is_featured")
+  isVerified Boolean @default(false) @map("is_verified")
+  status     String  @default("pending") @db.VarChar(50) // 'pending'|'approved'|'rejected'
+
+  // 가격 (향후 유료 기능)
+  price     Decimal @default(0) @db.Decimal(10, 2)
+  isPremium Boolean @default(false) @map("is_premium")
+
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  character Character           @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  reviews   MarketplaceReview[]
+
+  @@index([isFeatured])
+  @@index([category])
+  @@index([tags], type: Gin)
+  @@index([ratingAverage])
+  @@map("marketplace_characters")
+}
+
+model MarketplaceReview {
+  id          String   @id @default(uuid()) @db.Uuid
+  characterId String   @map("character_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  rating      Int // 1-5
+  comment     String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  character MarketplaceCharacter @relation(fields: [characterId], references: [characterId], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([characterId, userId])
+  @@index([characterId])
+  @@map("marketplace_reviews")
+}
+
+// ============================================
+// 8. 서비스 제공 모델/프리셋/메모리/TTS
+// ============================================
+
+model ServiceModel {
+  id        String @id @default(uuid()) @db.Uuid
+  modelId   String @unique @map("model_id") @db.VarChar(255)
+  name      String @db.VarChar(255)
+  provider  String @db.VarChar(100) // 'openai', 'anthropic', 'google' 등
+  modelType String @map("model_type") @db.VarChar(50) // 'chat'|'memory'|'emotion'|'translate'
+
+  // 설정 (JSONB)
+  config Json // 모델별 설정 (endpoint, apiKey 등)
+
+  isAvailable Boolean @default(true) @map("is_available")
+  isPremium   Boolean @default(false) @map("is_premium")
+
+  // 제한
+  maxTokens          Int? @map("max_tokens")
+  rateLimitPerMinute Int? @map("rate_limit_per_minute")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  userSelections UserModelSelection[]
+
+  @@index([modelType])
+  @@index([isAvailable])
+  @@map("service_models")
+}
+
+model ServicePreset {
+  id          String  @id @default(uuid()) @db.Uuid
+  presetId    String  @unique @map("preset_id") @db.VarChar(255)
+  name        String  @db.VarChar(255)
+  description String? @db.Text
+  imageUrl    String? @map("image_url") @db.Text
+
+  // 프리셋 설정 (JSONB) - botPreset 인터페이스 전체
+  presetData Json @map("preset_data")
+
+  isDefault   Boolean @default(false) @map("is_default")
+  isAvailable Boolean @default(true) @map("is_available")
+  isPremium   Boolean @default(false) @map("is_premium")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isDefault])
+  @@index([isAvailable])
+  @@map("service_presets")
+}
+
+model UserModelSelection {
+  userId    String @map("user_id") @db.Uuid
+  modelType String @map("model_type") @db.VarChar(50) // 'chat'|'memory'|'emotion'|'translate'|'preset'|'tts'|'imagegen'
+  modelId   String @map("model_id") @db.VarChar(255) // ServiceModel.modelId 또는 ServicePreset.presetId
+
+  // Relations
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model ServiceModel? @relation(fields: [modelId], references: [modelId], onDelete: Cascade)
+  // Note: preset은 ServicePreset.presetId를 modelId에 저장 (관계는 별도 처리)
+
+  @@id([userId, modelType])
+  @@index([modelId])
+  @@map("user_model_selections")
+}
+
+model MemoryServiceConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  serviceName String   @unique @map("service_name") @db.VarChar(100) // 'supamemory'|'hypav2'|'hypav3'|'hanurai'
+  config      Json // 각 메모리 타입별 설정
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("memory_service_configs")
+}
+
+model TTSServiceConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  serviceName String   @unique @map("service_name") @db.VarChar(100) // 'openai'|'elevenlabs'|'voicevox'|'naitts'
+  config      Json // TTS 서비스별 설정
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("tts_service_configs")
+}
+
+model ImageGenServiceConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  serviceName String   @unique @map("service_name") @db.VarChar(100) // 'stable-diffusion'|'dalle'|'novelai'
+  config      Json // 이미지 생성 서비스별 설정
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("image_gen_service_configs")
+}
+
+// Prisma Schema for RisuAI Service Web
+// This schema includes all fields from database.svelte.ts
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}

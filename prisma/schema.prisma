@@ -1,0 +1,11 @@
+// Prisma Schema for RisuAI Service Web
+// This schema includes all fields from database.svelte.ts
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}

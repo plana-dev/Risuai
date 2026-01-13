@@ -1,0 +1,42 @@
+
+
+// ============================================
+// 6. 에셋 관리 (Supabase Storage)
+// ============================================
+
+model Asset {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  characterId   String?  @map("character_id") @db.Uuid
+  
+  // 파일 정보
+  name          String   @db.VarChar(255)
+  type          String   @db.VarChar(50) // 'image'|'video'|'audio'|'emotion'|'other'
+  mimeType      String?  @map("mime_type") @db.VarChar(100)
+  fileSize      BigInt   @map("file_size")
+  
+  // Supabase Storage 경로
+  storagePath   String   @map("storage_path") @db.Text
+  storageBucket String   @default("reluv-assets") @map("storage_bucket") @db.VarChar(100)
+  
+  // 메타데이터
+  width         Int?
+  height        Int?
+  duration      Int? // 비디오/오디오 길이 (초)
+  
+  // 태그 및 분류
+  tags          String[] @default([])
+  isPublic      Boolean  @default(false) @map("is_public")
+  
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character     Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  
+  @@map("assets")
+  @@index([userId, characterId])
+  @@index([type])
+  @@index([isPublic])
+}

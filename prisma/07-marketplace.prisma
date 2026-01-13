@@ -1,0 +1,62 @@
+
+// ============================================
+// 7. 마켓플레이스
+// ============================================
+
+model MarketplaceCharacter {
+  characterId   String   @id @map("character_id") @db.Uuid
+  
+  // 마켓 정보
+  title         String   @db.VarChar(255)
+  description   String?  @db.Text
+  thumbnailUrl  String?  @map("thumbnail_url") @db.Text
+  category      String?  @db.VarChar(100)
+  tags          String[] @default([])
+  
+  // 통계
+  viewCount      Int      @default(0) @map("view_count")
+  downloadCount  Int      @default(0) @map("download_count")
+  ratingAverage  Decimal  @default(0) @map("rating_average") @db.Decimal(3, 2)
+  ratingCount    Int      @default(0) @map("rating_count")
+  
+  // 상태
+  isFeatured    Boolean  @default(false) @map("is_featured")
+  isVerified    Boolean  @default(false) @map("is_verified")
+  status        String   @default("pending") @db.VarChar(50) // 'pending'|'approved'|'rejected'
+  
+  // 가격 (향후 유료 기능)
+  price         Decimal  @default(0) @db.Decimal(10, 2)
+  isPremium     Boolean  @default(false) @map("is_premium")
+  
+  publishedAt   DateTime? @map("published_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  character     Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  reviews       MarketplaceReview[]
+  
+  @@map("marketplace_characters")
+  @@index([isFeatured])
+  @@index([category])
+  @@index([tags], type: Gin)
+  @@index([ratingAverage])
+}
+
+model MarketplaceReview {
+  id            String   @id @default(uuid()) @db.Uuid
+  characterId   String   @map("character_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  rating        Int      // 1-5
+  comment       String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  character     MarketplaceCharacter @relation(fields: [characterId], references: [characterId], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("marketplace_reviews")
+  @@unique([characterId, userId])
+  @@index([characterId])
+}

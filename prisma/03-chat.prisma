@@ -1,0 +1,95 @@
+
+// ============================================
+// 3. 채팅 및 메시지
+// ============================================
+
+model Chat {
+  id                String   @id @default(uuid()) @db.Uuid
+  characterId       String   @map("character_id") @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  name              String?  @db.VarChar(255)
+  note              String?  @db.Text
+  folderId          String?  @map("folder_id") @db.Uuid
+  
+  // 메모리 데이터 (JSONB)
+  supaMemoryData    String?  @map("supa_memory_data") @db.Text
+  hypaV2Data        Json?    @map("hypa_v2_data")
+  hypaV3Data        Json?    @map("hypa_v3_data")
+  lastMemory        String?  @map("last_memory") @db.Text
+  
+  // 스크립트 상태
+  scriptState       Json?    @map("script_state") // {[key:string]:string|number|boolean}
+  
+  // 기타 필드
+  sdData            String?  @map("sd_data") @db.Text
+  suggestMessages   String[] @map("suggest_messages") @default([])
+  isStreaming       Boolean  @default(false) @map("is_streaming")
+  modules           String[] @default([])
+  bindedPersona     String?  @map("binded_persona") @db.VarChar(255)
+  fmIndex           Int?     @map("fm_index")
+  bookmarks         String[] @default([])
+  bookmarkNames     Json?    @map("bookmark_names") // { [chatId: string]: string }
+  
+  // 메타데이터
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  lastDate          DateTime? @map("last_date")
+  
+  // Relations
+  character         Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  lorebooks         Lorebook[]
+  folder            ChatFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  
+  @@map("chats")
+  @@index([characterId, userId])
+  @@index([folderId])
+}
+
+model Message {
+  id              String   @id @default(uuid()) @db.Uuid
+  chatId          String   @map("chat_id") @db.Uuid
+  role            String   @db.VarChar(20) // 'user' | 'char'
+  data            String   @db.Text
+  saying          String?  @db.VarChar(255) // 그룹 채팅에서 캐릭터 ID
+  name            String?  @db.VarChar(255)
+  time            DateTime @default(now())
+  
+  // 생성 정보 (JSONB)
+  generationInfo Json?    @map("generation_info") // MessageGenerationInfo
+  promptInfo     Json?    @map("prompt_info") // MessagePresetInfo
+  
+  // 상태
+  disabled       Boolean  @default(false)
+  isComment      Boolean  @default(false) @map("is_comment")
+  otherUser      Boolean  @default(false) @map("other_user")
+  
+  // 순서
+  messageIndex   Int      @map("message_index")
+  
+  // Relations
+  chat           Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  @@map("messages")
+  @@unique([chatId, messageIndex])
+  @@index([chatId])
+  @@index([time])
+}
+
+model ChatFolder {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  characterId String?  @map("character_id") @db.Uuid
+  name        String?  @db.VarChar(255)
+  color       String?  @db.VarChar(50)
+  folded      Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  character   Character? @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  chats       Chat[]
+  
+  @@map("chat_folders")
+  @@index([userId, characterId])
+}

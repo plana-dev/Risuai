@@ -1,0 +1,89 @@
+
+// ============================================
+// 1. 사용자 및 인증
+// ============================================
+
+model User {
+  id            String   @id @default(uuid()) @db.Uuid
+  email         String   @unique @db.VarChar(255)
+  username      String   @db.VarChar(100)
+  passwordHash  String   @map("password_hash") @db.VarChar(255)
+  avatarUrl     String?  @map("avatar_url") @db.Text
+  
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  lastLoginAt   DateTime? @map("last_login_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  subscriptionTier String @default("free") @map("subscription_tier") @db.VarChar(50)
+  
+  // Relations
+  sessions      UserSession[]
+  characters    Character[]
+  chats         Chat[]
+  userSettings  UserSettings?
+  persona       Persona?
+  assets        Asset[]
+  reviews       MarketplaceReview[]
+  modelSelections UserModelSelection[]
+  
+  @@map("users")
+  @@index([email])
+}
+
+model UserSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  tokenHash   String   @unique @map("token_hash") @db.VarChar(255)
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  deviceInfo  Json?    @map("device_info")
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_sessions")
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model Persona {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @map("user_id") @db.Uuid
+  name          String   @db.VarChar(255)
+  personaPrompt String?  @map("persona_prompt") @db.Text
+  iconUrl       String?  @map("icon_url") @db.Text
+  note          String?  @db.Text
+  largePortrait Boolean  @default(false) @map("large_portrait")
+  personaNote   Boolean  @default(false) @map("persona_note")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("personas")
+  @@index([userId])
+}
+
+
+model UserSettings {
+  userId            String   @id @map("user_id") @db.Uuid
+  
+  // 유저 개인 설정 (서비스에서 제공하지 않는 개인화 설정)
+  username          String?  @db.VarChar(100)
+  userIconUrl       String?  @map("user_icon_url") @db.Text
+  userNote          String?  @map("user_note") @db.Text
+  language          String   @default("en") @db.VarChar(10)
+  theme             String?  @db.VarChar(50)
+  didFirstSetup     Boolean  @default(false) @map("did_first_setup")
+  
+  // 유저 개인 고급 설정 (JSONB) - 개인화된 설정만 저장
+  // 예: 개인화된 UI 설정 오버라이드, 개인화된 키바인딩 등
+  customSettings    Json?    @map("custom_settings")
+  
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_settings")
+}
