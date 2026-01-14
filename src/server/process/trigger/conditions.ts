@@ -4,8 +4,11 @@
  */
 
 import type { triggerCondition } from './types';
-import type { character, Chat } from '../../database';
-import { risuChatParser } from '../../../ts/parser.svelte';
+import type { character, Chat, Database } from '../../database';
+import { risuChatParser } from '../../parser';
+import type { RisuChatParserContext } from '../../parser/cbs-parser';
+import type { MatcherContext } from '../../parser/cbs-matcher';
+import type { BlockMatcherContext } from '../../parser/cbs-blocks';
 
 /**
  * 조건 체크 컨텍스트
@@ -14,6 +17,12 @@ export interface ConditionCheckContext {
     char: character;
     chat: Chat;
     getVar: (key: string) => string;
+    database?: Database; // Parser contexts 생성을 위해 추가
+    parserContexts?: {
+        parser: RisuChatParserContext;
+        matcher: MatcherContext;
+        block: BlockMatcherContext;
+    };
 }
 
 /**
@@ -39,8 +48,13 @@ export function checkTriggerCondition(
             return false;
         }
 
-        const conditionValue = risuChatParser(condition.value, { chara: char });
-        varValue = risuChatParser(varValue, { chara: char });
+        const parserContexts = context.parserContexts;
+        const conditionValue = parserContexts 
+            ? risuChatParser(condition.value, { chara: char }, parserContexts)
+            : risuChatParser(condition.value, { chara: char }); // Fallback: contexts 없으면 기본 파싱
+        varValue = parserContexts
+            ? risuChatParser(varValue, { chara: char }, parserContexts)
+            : risuChatParser(varValue, { chara: char }); // Fallback
 
         switch (condition.operator) {
             case 'true': {
@@ -87,8 +101,13 @@ export function checkTriggerCondition(
         }
         return true;
     } else if (condition.type === 'exists') {
-        const conditionValue = risuChatParser(condition.value, { chara: char });
-        const val = risuChatParser(conditionValue, { chara: char });
+        const parserContexts = context.parserContexts;
+        const conditionValue = parserContexts
+            ? risuChatParser(condition.value, { chara: char }, parserContexts)
+            : risuChatParser(condition.value, { chara: char }); // Fallback
+        const val = parserContexts
+            ? risuChatParser(conditionValue, { chara: char }, parserContexts)
+            : risuChatParser(conditionValue, { chara: char }); // Fallback
         let da = chat.message.slice(0 - condition.depth).map(v => v.data).join(' ');
 
         if (condition.type2 === 'strict') {

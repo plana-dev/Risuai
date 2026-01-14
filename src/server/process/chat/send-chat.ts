@@ -12,30 +12,32 @@ import type { SendChatArg, SendChatResult, UnformatedPrompts, StageTimings } fro
 import type { ProcessContext } from '../context';
 import type { TokenizerContext } from '../../tokenizer';
 import { v4 as uuidv4 } from 'uuid';
-import { risuChatParser } from '../../../ts/parser.svelte';
-import { parseChatML } from '../../parser';
+import { risuChatParser, parseChatML } from '../../parser';
+import { createParserContexts } from '../parser-context';
 import { loadLoreBookV3Prompt } from '../lorebook';
 import { runTrigger } from '../trigger';
 import { requestChatData } from '../request';
 import { tokenize } from '../../tokenizer';
 // TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
 import { exampleMessage } from '../example-messages';
-import { processScript, processScriptFull } from '../../../ts/process/scripts';
+import { processScript, processScriptFull } from '../auxiliary/scripts';
 import { runLuaEditTrigger } from '../scripting';
 import { supaMemory } from '../memory/supa-memory';
 import { hanuraiMemory } from '../memory/hanurai-memory';
 import { hypaMemoryV2 } from '../../../ts/process/memory/hypav2';
 import { hypaMemoryV3 } from '../../../ts/process/memory/hypav3';
-import { getPersonaPrompt, getUserName, getAuthorNoteDefaultText, findCharacterbyId, parseToggleSyntax, prebuiltAssetCommand } from '../../util';
-import { additionalInformations } from '../../../ts/process/embedding/addinfo';
-import { getInlayAsset } from '../../../ts/process/files/inlays';
-import { getGenerationModelString } from '../../../ts/process/models/modelString';
-import { getModuleAssets, getModuleToggles } from '../../../ts/process/modules';
+// Util functions are now available via ProcessContext
+// import { getPersonaPrompt, getUserName, getAuthorNoteDefaultText, findCharacterbyId, parseToggleSyntax, prebuiltAssetCommand } from '../../util';
+import { parseToggleSyntax, prebuiltAssetCommand } from '../../util';
+import { additionalInformations } from '../auxiliary/additional-info';
+import { getInlayAsset } from '../auxiliary/file-processing';
+import { getGenerationModelString } from '../auxiliary/model-string';
+import { getModuleAssets, getModuleToggles, getModuleLorebooks } from '../auxiliary/modules';
 import { readImage } from '../../../ts/globalApi.svelte';
 import { asBuffer } from '../../util';
 import { getModelInfo } from '../../model/modellist-server';
 import { LLMFlags } from '../../model/modellist';
-import { runImageEmbedding } from '../../../ts/process/transformers';
+import { runImageEmbedding } from '../auxiliary/image-embedding';
 import { HypaProcessor } from '../memory/hypa-processor';
 
 /**
@@ -84,7 +86,7 @@ export async function sendChat(
         if (d) {
             return d;
         } else {
-            const r = findCharacterbyId(id, database);
+            const r = context.findCharacterbyId(id);
             if (r) {
                 findCharCache[id] = r;
             }
@@ -92,9 +94,12 @@ export async function sendChat(
         }
     }
 
+    // Parser contexts 생성 (한 번만 생성하여 재사용)
+    const parserContexts = createParserContexts(context);
+
     function runCurrentChatFunction(chat: Chat): Chat {
         chat.message = chat.message.map(v => {
-            v.data = risuChatParser(v.data, { chara: currentCharacter, runVar: true });
+            v.data = risuChatParser(v.data, { chara: currentCharacter, runVar: true }, parserContexts);
             return v;
         });
         return chat;
@@ -225,7 +230,7 @@ export async function sendChat(
             { chara: currentChar }
         );
 
-        const additionalInfo = await additionalInformations(currentChar, currentChatData);
+        const additionalInfo = await additionalInformations(currentChar, currentChatData, context);
         if (additionalInfo) {
             description += '\n\n' + risuChatParser(additionalInfo, { chara: currentChar });
         }
@@ -257,12 +262,11 @@ export async function sendChat(
             currentChatData.scriptstate ??= {};
             currentChatData.scriptstate['$' + key] = value;
         },
-        findCharacterbyId: async (id: string) => {
+        findCharacterbyId: (id: string) => {
             return findCharacterbyIdwithCache(id);
         },
         getModuleLorebooks: () => {
-            // TODO: 모듈 로어북 가져오기
-            return [];
+            return getModuleLorebooks(database, currentChar, currentChatData);
         },
     });
 
@@ -273,7 +277,7 @@ export async function sendChat(
     for (const lorebook of normalActives) {
         unformated.lorebook.push({
             role: lorebook.role,
-            content: risuChatParser(lorebook.prompt, { chara: currentChar }),
+            content: risuChatParser(lorebook.prompt, { chara: currentChar }, parserContexts),
         });
     }
 
@@ -281,7 +285,7 @@ export async function sendChat(
     if (database.personaPrompt) {
         unformated.personaPrompt.push({
             role: 'system',
-            content: risuChatParser(getPersonaPrompt(), { chara: currentChar }),
+            content: risuChatParser(context.getPersonaPrompt(), { chara: currentChar }, parserContexts),
         });
     }
 
@@ -289,7 +293,7 @@ export async function sendChat(
     // 현재는 기본 구조만 제공
 
     // 예제 메시지
-    const examples = exampleMessage(currentChar, getUserName());
+    const examples = exampleMessage(currentChar, context.getUserName(), context);
     let chats: OpenAIChat[] = examples;
 
     if (!database.aiModel.startsWith('novelai') || database.promptSettings?.trimStartNewChat) {
@@ -308,8 +312,9 @@ export async function sendChat(
             role: 'assistant',
             content: await processScript(
                 nowChatroom,
-                risuChatParser(firstMsg, { chara: currentChar }),
-                'editprocess'
+                risuChatParser(firstMsg, { chara: currentChar }, parserContexts),
+                'editprocess',
+                context
             ),
         };
 
@@ -353,8 +358,9 @@ export async function sendChat(
         let formatedChat = (
             await processScriptFull(
                 nowChatroom,
-                risuChatParser(msg.data, { chara: currentChar, role: msg.role }),
+                risuChatParser(msg.data, { chara: currentChar, role: msg.role }, parserContexts),
                 'editprocess',
+                context,
                 index,
                 {
                     chatRole: msg.role,
@@ -370,7 +376,7 @@ export async function sendChat(
                 name = `${currentChar.name}`;
             }
         } else if (msg.role === 'user') {
-            name = `${getUserName()}`;
+            name = `${context.getUserName()}`;
         }
 
         let inlays: string[] = [];
@@ -395,7 +401,7 @@ export async function sendChat(
         if (inlays.length > 0) {
             for (const inlay of inlays) {
                 const inlayName = inlay.replace('{{inlayed::', '').replace('{{inlay::', '').replace('}}', '');
-                const inlayData = await getInlayAsset(inlayName);
+                const inlayData = await getInlayAsset(context.userId, inlayName);
                 if (inlayData?.type === 'image') {
                     if (modelinfo.flags.includes(LLMFlags.hasImageInput)) {
                         multimodal.push({
@@ -454,7 +460,7 @@ export async function sendChat(
 
     stageTimings.stage3Start = Date.now();
     const generationId = uuidv4();
-    const generationModel = getGenerationModelString();
+    const generationModel = getGenerationModelString(database);
 
     const generationInfo: MessageGenerationInfo = {
         model: generationModel,

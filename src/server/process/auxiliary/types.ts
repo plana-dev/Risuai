@@ -38,3 +38,26 @@ export type AINContent = {
     type: 'outside' | 'inside';
     content: string;
 };
+
+/**
+ * Inlay Asset type
+ */
+export type InlayAsset = {
+    id?: string;
+    name: string;
+    data: string; // base64 data URI
+    ext: string;
+    height?: number;
+    width?: number;
+    type: 'image' | 'video' | 'audio';
+};
+
+/**
+ * File Process Result type
+ */
+export type FileProcessResult = {
+    success: boolean;
+    error?: string;
+    data?: any;
+    assetId?: string;
+};

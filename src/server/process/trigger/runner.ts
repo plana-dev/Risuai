@@ -9,18 +9,19 @@
 import type { character, Chat, Database } from '../../database';
 import type { triggerMode, triggerscript, additonalSysPrompt, TriggerRunResult } from './types';
 import { checkAllConditions, type ConditionCheckContext } from './conditions';
-import { risuChatParser } from '../../../ts/parser.svelte';
+import { risuChatParser } from '../../parser';
+import { createParserContexts } from '../parser-context';
 import { parseKeyValue } from '../../../ts/util';
 import { runScripted } from '../scripting';
 import type { TokenizerContext } from '../../tokenizer';
 // TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
-import { getModuleTriggers } from '../../../ts/process/modules';
+import { getModuleTriggers } from '../auxiliary/modules';
 import { processMultiCommand } from '../../../ts/process/command';
 import { requestChatData } from '../request';
 import { HypaProcessor } from '../memory/hypa-processor';
 import { generateAIImage } from '../../../ts/process/stableDiff';
 import { writeInlayImage } from '../../../ts/process/files/inlays';
-import { parseChatML } from '../../../ts/parser/chatML';
+import { parseChatML } from '../../parser';
 import type { OpenAIChat } from '../types';
 
 /**
@@ -70,7 +71,7 @@ export async function runTrigger(
             v.lowLevelAccess = CharacterlowLevelAccess;
             return v;
         })
-        .concat(getModuleTriggers() || []);
+        .concat(getModuleTriggers(db, char, chat) || []);
 
     const db = arg.database;
     if (!db) {
@@ -217,6 +218,8 @@ export async function runTrigger(
             char,
             chat,
             getVar,
+            database: db,
+            parserContexts,
         };
 
         if (!checkAllConditions(trigger.conditions, conditionContext)) {
@@ -239,8 +242,8 @@ export async function runTrigger(
             // 이펙트 처리
             switch (effect.type) {
                 case 'setvar': {
-                    const effectValue = risuChatParser(effect.value, { chara: char });
-                    const varKey = risuChatParser(effect.var, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
+                    const varKey = risuChatParser(effect.var, { chara: char }, parserContexts);
                     let originalVar = Number(getVar(varKey));
                     if (Number.isNaN(originalVar)) {
                         originalVar = 0;
@@ -272,12 +275,12 @@ export async function runTrigger(
                     break;
                 }
                 case 'systemprompt': {
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     additonalSysPrompt[effect.location] += effectValue + '\n\n';
                     break;
                 }
                 case 'impersonate': {
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     if (effect.role === 'user') {
                         chat.message.push({ role: 'user', data: effectValue });
                     } else if (effect.role === 'char') {
@@ -286,7 +289,7 @@ export async function runTrigger(
                     break;
                 }
                 case 'command': {
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     await processMultiCommand(effectValue);
                     break;
                 }
@@ -318,14 +321,14 @@ export async function runTrigger(
                     break;
                 }
                 case 'cutchat': {
-                    const start = Number(risuChatParser(effect.start, { chara: char }));
-                    const end = Number(risuChatParser(effect.end, { chara: char }));
+                    const start = Number(risuChatParser(effect.start, { chara: char }, parserContexts));
+                    const end = Number(risuChatParser(effect.end, { chara: char }, parserContexts));
                     chat.message = chat.message.slice(start, end);
                     break;
                 }
                 case 'modifychat': {
-                    const index = Number(risuChatParser(effect.index, { chara: char }));
-                    const value = risuChatParser(effect.value, { chara: char });
+                    const index = Number(risuChatParser(effect.index, { chara: char }, parserContexts));
+                    const value = risuChatParser(effect.value, { chara: char }, parserContexts);
                     if (chat.message[index]) {
                         chat.message[index].data = value;
                     }
@@ -339,7 +342,7 @@ export async function runTrigger(
                         break;
                     }
                     // 서버에서는 로깅으로 대체
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     console.log('[Trigger Alert]', effect.alertType, effectValue);
                     break;
                 }
@@ -354,7 +357,7 @@ export async function runTrigger(
                     if (!trigger.lowLevelAccess) {
                         break;
                     }
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     const varName = effect.inputVar;
                     let promptbody: OpenAIChat[] = parseChatML(effectValue) || [];
                     if (!promptbody || promptbody.length === 0) {
@@ -387,8 +390,8 @@ export async function runTrigger(
                         throw new Error('TokenizerContext is required');
                     }
                     const processer = new HypaProcessor('auto', undefined, arg.userId, arg.chatId, db);
-                    const effectValue = risuChatParser(effect.value, { chara: char });
-                    const source = risuChatParser(effect.source, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
+                    const source = risuChatParser(effect.source, { chara: char }, parserContexts);
                     await processer.addText(effectValue.split('§'), db);
                     const val = await processer.similaritySearch(source);
                     setVar(effect.inputVar, val.join('§'));
@@ -398,7 +401,7 @@ export async function runTrigger(
                     if (!trigger.lowLevelAccess) {
                         break;
                     }
-                    const effectValue = risuChatParser(effect.value, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     const regex = new RegExp(effect.regex, effect.flags);
                     const regexResult = regex.exec(effectValue);
                     if (!regexResult) {
@@ -419,8 +422,8 @@ export async function runTrigger(
                     if (!trigger.lowLevelAccess) {
                         break;
                     }
-                    const effectValue = risuChatParser(effect.value, { chara: char });
-                    const negValue = risuChatParser(effect.negValue, { chara: char });
+                    const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
+                    const negValue = risuChatParser(effect.negValue, { chara: char }, parserContexts);
                     const gen = await generateAIImage(effectValue, char, negValue, 'inlay');
                     if (!gen) {
                         setVar(effect.inputVar, 'Error: Image generation failed');
@@ -467,9 +470,9 @@ export async function runTrigger(
                 case 'v2SetVar': {
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
-                    const varKey = risuChatParser(effect.var, { chara: char });
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
+                    const varKey = risuChatParser(effect.var, { chara: char }, parserContexts);
                     let originalVar = Number(getVar(varKey));
                     if (Number.isNaN(originalVar)) {
                         originalVar = 0;
@@ -507,9 +510,9 @@ export async function runTrigger(
                 case 'v2DeclareLocalVar': {
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
-                    const varKey = risuChatParser(effect.var, { chara: char });
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
+                    const varKey = risuChatParser(effect.var, { chara: char }, parserContexts);
                     const finalValue = effectValue === null || effectValue === undefined ? 'null' : effectValue;
                     declareLocalVar(varKey, finalValue, effect.indent);
                     break;
@@ -518,12 +521,12 @@ export async function runTrigger(
                 case 'v2IfAdvanced': {
                     const sourceValue =
                         effect.type === 'v2If' || effect.sourceType === 'var'
-                            ? getVar(risuChatParser(effect.source, { chara: char }))
-                            : risuChatParser(effect.source, { chara: char });
+                            ? getVar(risuChatParser(effect.source, { chara: char }, parserContexts))
+                            : risuChatParser(effect.source, { chara: char }, parserContexts);
                     const targetValue =
                         effect.targetType === 'value'
-                            ? risuChatParser(effect.target, { chara: char })
-                            : getVar(risuChatParser(effect.target, { chara: char }));
+                            ? risuChatParser(effect.target, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.target, { chara: char }, parserContexts));
                     let pass = false;
 
                     switch (effect.condition) {
@@ -680,8 +683,8 @@ export async function runTrigger(
                 case 'v2ConsoleLog': {
                     const sourceValue =
                         effect.sourceType === 'value'
-                            ? risuChatParser(effect.source, { chara: char })
-                            : getVar(risuChatParser(effect.source, { chara: char }));
+                            ? risuChatParser(effect.source, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.source, { chara: char }, parserContexts));
                     console.log('[Trigger]', sourceValue);
                     break;
                 }
@@ -697,24 +700,24 @@ export async function runTrigger(
                 case 'v2CutChat': {
                     const start =
                         effect.startType === 'value'
-                            ? Number(risuChatParser(effect.start, { chara: char }))
-                            : Number(getVar(risuChatParser(effect.start, { chara: char })));
+                            ? Number(risuChatParser(effect.start, { chara: char }, parserContexts))
+                            : Number(getVar(risuChatParser(effect.start, { chara: char }, parserContexts)));
                     const end =
                         effect.endType === 'value'
-                            ? Number(risuChatParser(effect.end, { chara: char }))
-                            : Number(getVar(risuChatParser(effect.end, { chara: char })));
+                            ? Number(risuChatParser(effect.end, { chara: char }, parserContexts))
+                            : Number(getVar(risuChatParser(effect.end, { chara: char }, parserContexts)));
                     chat.message = chat.message.slice(start, end);
                     break;
                 }
                 case 'v2ModifyChat': {
                     const index =
                         effect.indexType === 'value'
-                            ? Number(risuChatParser(effect.index, { chara: char }))
-                            : Number(getVar(risuChatParser(effect.index, { chara: char })));
+                            ? Number(risuChatParser(effect.index, { chara: char }, parserContexts))
+                            : Number(getVar(risuChatParser(effect.index, { chara: char }, parserContexts)));
                     const value =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     if (chat.message[index]) {
                         chat.message[index].data = value;
                     }
@@ -723,16 +726,16 @@ export async function runTrigger(
                 case 'v2SystemPrompt': {
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     additonalSysPrompt[effect.location] += effectValue + '\n\n';
                     break;
                 }
                 case 'v2Impersonate': {
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     if (effect.role === 'user') {
                         chat.message.push({ role: 'user', data: effectValue });
                     } else if (effect.role === 'char') {
@@ -743,8 +746,8 @@ export async function runTrigger(
                 case 'v2Command': {
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     await processMultiCommand(effectValue);
                     break;
                 }
@@ -758,12 +761,12 @@ export async function runTrigger(
                     }
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     const negValue =
                         effect.negValueType === 'value'
-                            ? risuChatParser(effect.negValue, { chara: char })
-                            : getVar(risuChatParser(effect.negValue, { chara: char }));
+                            ? risuChatParser(effect.negValue, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.negValue, { chara: char }, parserContexts));
                     const gen = await generateAIImage(effectValue, char, negValue, 'inlay');
                     if (!gen) {
                         setVar(effect.outputVar, 'Error: Image generation failed');
@@ -786,12 +789,12 @@ export async function runTrigger(
                     const processer = new HypaProcessor('auto', undefined, arg.userId, arg.chatId, db);
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     const source =
                         effect.sourceType === 'value'
-                            ? risuChatParser(effect.source, { chara: char })
-                            : getVar(risuChatParser(effect.source, { chara: char }));
+                            ? risuChatParser(effect.source, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.source, { chara: char }, parserContexts));
                     await processer.addText(effectValue.split('§'), db);
                     const val = await processer.similaritySearch(source);
                     setVar(effect.outputVar, val.join('§'));
@@ -803,8 +806,8 @@ export async function runTrigger(
                     }
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     let promptbody: OpenAIChat[] = parseChatML(effectValue) || [];
                     if (!promptbody || promptbody.length === 0) {
                         promptbody = [{ role: 'user', content: effectValue }];
@@ -834,8 +837,8 @@ export async function runTrigger(
                     }
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     console.log('[Trigger Alert]', effectValue);
                     break;
                 }
@@ -845,16 +848,16 @@ export async function runTrigger(
                     }
                     const effectValue =
                         effect.valueType === 'value'
-                            ? risuChatParser(effect.value, { chara: char })
-                            : getVar(risuChatParser(effect.value, { chara: char }));
+                            ? risuChatParser(effect.value, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.value, { chara: char }, parserContexts));
                     const regexStr =
                         effect.regexType === 'value'
-                            ? risuChatParser(effect.regex, { chara: char })
-                            : getVar(risuChatParser(effect.regex, { chara: char }));
+                            ? risuChatParser(effect.regex, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.regex, { chara: char }, parserContexts));
                     const flags =
                         effect.flagsType === 'value'
-                            ? risuChatParser(effect.flags, { chara: char })
-                            : getVar(risuChatParser(effect.flags, { chara: char }));
+                            ? risuChatParser(effect.flags, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.flags, { chara: char }, parserContexts));
                     const regex = new RegExp(regexStr, flags);
                     const regexResult = regex.exec(effectValue);
                     if (!regexResult) {
@@ -863,8 +866,8 @@ export async function runTrigger(
                     }
                     const result =
                         effect.resultType === 'value'
-                            ? risuChatParser(effect.result, { chara: char })
-                            : getVar(risuChatParser(effect.result, { chara: char }));
+                            ? risuChatParser(effect.result, { chara: char }, parserContexts)
+                            : getVar(risuChatParser(effect.result, { chara: char }, parserContexts));
                     const finalResult = result
                         .replace(/\$[0-9]+/g, match => {
                             const index = Number(match.slice(1));
@@ -883,8 +886,8 @@ export async function runTrigger(
                 case 'v2GetMessageAtIndex': {
                     const index =
                         effect.indexType === 'value'
-                            ? Number(risuChatParser(effect.index, { chara: char }))
-                            : Number(getVar(risuChatParser(effect.index, { chara: char })));
+                            ? Number(risuChatParser(effect.index, { chara: char }, parserContexts))
+                            : Number(getVar(risuChatParser(effect.index, { chara: char }, parserContexts)));
                     const message = chat.message[index];
                     setVar(effect.outputVar, message?.data || '');
                     break;
@@ -896,8 +899,8 @@ export async function runTrigger(
                 case 'v2Wait': {
                     const waitTime =
                         effect.valueType === 'value'
-                            ? Number(risuChatParser(effect.value, { chara: char }))
-                            : Number(getVar(risuChatParser(effect.value, { chara: char })));
+                            ? Number(risuChatParser(effect.value, { chara: char }, parserContexts))
+                            : Number(getVar(risuChatParser(effect.value, { chara: char }, parserContexts)));
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     break;
                 }

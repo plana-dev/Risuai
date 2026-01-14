@@ -186,6 +186,13 @@ export interface ProcessContext {
     // 모델 정보
     modelInfo: LLMModel;
 
+    // 유틸리티 함수들
+    getUserName: () => string;
+    getUserIcon: () => string;
+    getPersonaPrompt: () => string;
+    getAuthorNoteDefaultText: () => string;
+    findCharacterbyId: (id: string) => character | null;
+
     // 추가 옵션
     options?: {
         chatAdditionalTokens?: number;

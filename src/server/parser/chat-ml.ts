@@ -5,11 +5,23 @@
 
 import { risuChatParser } from './cbs-parser';
 import type { OpenAIChat } from '../process/types';
+import type { RisuChatParserContext } from './cbs-parser';
+import type { MatcherContext } from './cbs-matcher';
+import type { BlockMatcherContext } from './cbs-blocks';
 
 /**
  * ChatML 형식 파싱
+ * @param data - ChatML 형식 문자열
+ * @param contexts - Parser contexts (선택적, 없으면 기본값 사용)
  */
-export function parseChatML(data: string): OpenAIChat[] | null {
+export function parseChatML(
+    data: string,
+    contexts?: {
+        parser: RisuChatParserContext;
+        matcher: MatcherContext;
+        block: BlockMatcherContext;
+    }
+): OpenAIChat[] | null {
     const starter = '<|im_start|>';
     const seperator = '<|im_sep|>';
     const ender = '<|im_end|>';
@@ -61,7 +73,7 @@ export function parseChatML(data: string): OpenAIChat[] | null {
 
             return {
                 role: role,
-                content: risuChatParser(v),
+                content: contexts ? risuChatParser(v, {}, contexts) : v, // contexts가 없으면 파싱하지 않음
                 thoughts: thoughts,
             } as OpenAIChat;
         });

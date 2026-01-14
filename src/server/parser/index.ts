@@ -41,3 +41,7 @@ export * from './markdown';
 
 // ChatML 파싱
 export { parseChatML } from './chat-ml';
+
+// CBS Parser
+export { risuChatParser } from './cbs-parser';
+export type { RisuChatParserContext } from './cbs-parser';

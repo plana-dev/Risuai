@@ -10,7 +10,10 @@ import { getDatabaseAdapter } from '../../database-adapter';
 import type { Database, character, Chat, triggerscript } from '../../database';
 import { v4 as uuidv4 } from 'uuid';
 import { Mutex } from '../../../ts/mutex';
-import { risuChatParser, hasher } from '../../../ts/parser.svelte';
+import { risuChatParser, hasher } from '../../parser';
+import type { RisuChatParserContext } from '../../parser/cbs-parser';
+import type { MatcherContext } from '../../parser/cbs-matcher';
+import type { BlockMatcherContext } from '../../parser/cbs-blocks';
 import { tokenize } from '../../tokenizer';
 import type { OpenAIChat } from '../types';
 import type { TokenizerContext } from '../../tokenizer';
@@ -19,7 +22,7 @@ import { requestChatData } from '../request';
 // TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
 import { generateAIImage } from '../../../ts/process/stableDiff';
 import { writeInlayImage, getInlayAsset } from '../../../ts/process/files/inlays';
-import { getModuleLorebooks } from '../../../ts/process/modules';
+import { getModuleLorebooks } from '../auxiliary/modules';
 import { loadLoreBookV3Prompt, type LorebookLoadContext } from '../lorebook';
 import { getPersonaPrompt, getUserName, getUserIcon } from '../../util';
 import { readImage } from '../../../ts/globalApi.svelte';
@@ -330,6 +333,43 @@ export async function runScripted(
   const redis = getRedisService();
   const db = getDatabaseAdapter();
 
+  // Parser contexts 생성
+  const dbData = database || (await db.loadUserDatabase(userId));
+  const parserContexts = {
+    parser: {
+      getDatabase: () => dbData,
+      getSelectedCharID: () => 0, // TODO: 실제 선택된 캐릭터 ID 가져오기
+      findCharacterbyId: (id: string) => {
+        return dbData.characters?.find(c => c.chaId === id && c.type !== 'group') || null;
+      },
+    },
+    matcher: {
+      calcString: (str: string) => {
+        // TODO: 서버 사이드 calcString 구현
+        const { calcString } = require('../../../ts/process/infunctions');
+        return calcString(str);
+      },
+      getMatcherMap: () => {
+        // TODO: 서버 사이드 getMatcherMap 구현
+        const { getMatcherMap } = require('../../../ts/cbs');
+        return getMatcherMap();
+      },
+      initMatcher: () => {
+        // TODO: 서버 사이드 initMatcher 구현
+        const { initMatcher } = require('../../../ts/cbs');
+        initMatcher();
+      },
+    },
+    block: {
+      getChatVar: (key: string) => {
+        return chat?.localVars?.[key] || '';
+      },
+      getGlobalChatVar: (key: string) => {
+        return dbData.globalVars?.[key] || '';
+      },
+    },
+  };
+
   // Redis에서 스크립트 변수 가져오기
   const scriptVars = await redis.getScriptVars(userId, characterId, chatId) || {};
 
@@ -566,7 +606,7 @@ export async function runScripted(
       });
 
       declareAPI('cbs', (value: string) => {
-        return risuChatParser(value, { chara: char });
+        return risuChatParser(value, { chara: char }, parserContexts);
       });
 
       declareAPI('logMain', (value: string) => {
@@ -788,7 +828,7 @@ export async function runScripted(
             
             const multimodals: any[] = [];
             for (const inlay of inlays) {
-              const inlayData = await getInlayAsset(inlay);
+              const inlayData = await getInlayAsset(userId, inlay);
               multimodals.push({
                 type: inlayData?.type,
                 base64: inlayData?.data,
@@ -940,7 +980,7 @@ export async function runScripted(
         if (!char) {
           return '';
         }
-        return risuChatParser(getPersonaPrompt(), { chara: char });
+        return risuChatParser(getPersonaPrompt(), { chara: char }, parserContexts);
       });
 
       declareAPI('getAuthorsNote', (id: string) => {
@@ -981,11 +1021,11 @@ export async function runScripted(
         const loreBooks = [
           ...(engineState.chat?.localLore ?? []),
           ...(char.globalLore ?? []),
-          ...(getModuleLorebooks() || []),
+          ...(getModuleLorebooks(dbData, char, engineState.chat) || []),
         ];
         const found = loreBooks.filter((b) => b.comment === search);
 
-        return JSON.stringify(found.map((b) => ({ ...b, content: risuChatParser(b.content, { chara: char }) })));
+        return JSON.stringify(found.map((b) => ({ ...b, content: risuChatParser(b.content, { chara: char }, parserContexts) })));
       });
 
       declareAPI('upsertLocalLoreBook', (
@@ -1067,7 +1107,7 @@ export async function runScripted(
         const loreBooks: any[] = [];
 
         for (const book of fullLoreBooks) {
-          const parsed = risuChatParser(book.prompt, { chara: char }).trim();
+          const parsed = risuChatParser(book.prompt, { chara: char }, parserContexts).trim();
           if (parsed.length === 0) {
             continue;
           }
@@ -1149,7 +1189,7 @@ export async function runScripted(
             
             const multimodals: any[] = [];
             for (const inlay of inlays) {
-              const inlayData = await getInlayAsset(inlay);
+              const inlayData = await getInlayAsset(userId, inlay);
               multimodals.push({
                 type: inlayData?.type,
                 base64: inlayData?.data,

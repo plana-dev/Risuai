@@ -10,6 +10,13 @@ import { getModelInfo } from '../model/modellist-server';
 import { getCharacter, getChat } from '../database';
 import type { Database, character, groupChat, Chat } from '../database';
 import type { LLMModel } from '../model/types';
+import {
+    getUserName as getUserNameUtil,
+    getUserIcon as getUserIconUtil,
+    getPersonaPrompt as getPersonaPromptUtil,
+    getAuthorNoteDefaultText as getAuthorNoteDefaultTextUtil,
+    findCharacterbyId as findCharacterbyIdUtil,
+} from '../util/database';
 
 /**
  * ProcessContext 생성
@@ -53,6 +60,58 @@ export async function createProcessContext(
     const selectedCharIndex = database.characters.findIndex(c => c.chaId === characterId);
     const selectedChatIndex = character.chats.findIndex(c => c.chatId === chatId);
 
+    // 유틸리티 함수들 생성 (동기 버전 - 이미 로드된 database 사용)
+    const getUserName = (): string => {
+        // 바인딩된 페르소나 확인
+        if (chat.bindedPersona) {
+            const persona = database.personas.find(p => p.id === chat.bindedPersona);
+            if (persona) {
+                return persona.name;
+            }
+        }
+        return database.username ?? 'User';
+    };
+
+    const getUserIcon = (): string => {
+        // 바인딩된 페르소나 확인
+        if (chat.bindedPersona) {
+            const persona = database.personas.find(p => p.id === chat.bindedPersona);
+            if (persona) {
+                return persona.icon ?? '';
+            }
+        }
+        return database.userIcon ?? '';
+    };
+
+    const getPersonaPrompt = (): string => {
+        // 바인딩된 페르소나 확인
+        if (chat.bindedPersona) {
+            const persona = database.personas.find(p => p.id === chat.bindedPersona);
+            if (persona) {
+                return persona.personaPrompt ?? '';
+            }
+        }
+        return database.personaPrompt ?? '';
+    };
+
+    const getAuthorNoteDefaultText = (): string => {
+        const template = database.promptTemplate;
+        if (!template) {
+            return '';
+        }
+        for (const v of template) {
+            if (v.type === 'authornote') {
+                return v.defaultText ?? '';
+            }
+        }
+        return database.authorNoteDefaultText ?? '';
+    };
+
+    const findCharacterbyId = (id: string): character | null => {
+        const found = database.characters.find(c => c.chaId === id && c.type !== 'group');
+        return found || null;
+    };
+
     return {
         userId,
         characterId,
@@ -66,6 +125,11 @@ export async function createProcessContext(
         selectedCharIndex: selectedCharIndex >= 0 ? selectedCharIndex : undefined,
         selectedChatIndex: selectedChatIndex >= 0 ? selectedChatIndex : undefined,
         modelInfo,
+        getUserName,
+        getUserIcon,
+        getPersonaPrompt,
+        getAuthorNoteDefaultText,
+        findCharacterbyId,
         options,
     };
 }
