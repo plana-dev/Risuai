@@ -234,10 +234,111 @@ export async function processMultisendFile(
         switch (fileType) {
             case 'po': {
                 // PO 파일 처리
-                // TODO: PO 파일 파싱 로직 구현
+                // 원본: src/ts/process/files/multisend.ts의 sendPofile
+                const lines = fileContent.split('\n');
+                const messages: any[] = [];
+                let msgId = '';
+                let note = '';
+                let speaker = '';
+                let parseMode = 0; // 0: normal, 1: msgid continuation, 2: msgstr
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+
+                    if (line === '') {
+                        if (msgId === '') {
+                            continue;
+                        }
+
+                        // 메시지 생성
+                        let text = msgId;
+                        if (speaker !== '') {
+                            text = `Speaker: ${speaker}\n${text}`;
+                        }
+                        if (note !== '') {
+                            text = `Note: ${note}\n${text}`;
+                        }
+
+                        messages.push({
+                            role: 'user',
+                            data: text,
+                        });
+
+                        // 리셋
+                        note = '';
+                        speaker = '';
+                        msgId = '';
+                        parseMode = 0;
+                        continue;
+                    }
+
+                    if (line.startsWith('#. Note =')) {
+                        note = line.replace('#. Note =', '').trim();
+                        continue;
+                    }
+
+                    if (line.startsWith('#. Speaker =')) {
+                        speaker = line.replace('#. Speaker =', '').trim();
+                        continue;
+                    }
+
+                    if (line.startsWith('msgid')) {
+                        parseMode = 0;
+                        msgId = line
+                            .replace('msgid ', '')
+                            .trim()
+                            .replaceAll('\\"', '♠#')
+                            .replaceAll('"', '')
+                            .replaceAll('♠#', '\\"');
+                        if (msgId === '') {
+                            parseMode = 1;
+                        }
+                        continue;
+                    }
+
+                    if (parseMode === 1 && line.startsWith('"') && line.endsWith('"')) {
+                        msgId += line.substring(1, line.length - 1).replaceAll('\\"', '"');
+                        continue;
+                    }
+
+                    if (line.startsWith('msgstr')) {
+                        if (msgId === '') {
+                            parseMode = 0;
+                        } else {
+                            parseMode = 2;
+                        }
+                        continue;
+                    }
+
+                    if (parseMode === 2 && line.startsWith('"') && line.endsWith('"')) {
+                        continue; // msgstr 내용은 무시
+                    }
+                }
+
+                // 마지막 메시지 처리
+                if (msgId !== '') {
+                    let text = msgId;
+                    if (speaker !== '') {
+                        text = `Speaker: ${speaker}\n${text}`;
+                    }
+                    if (note !== '') {
+                        text = `Note: ${note}\n${text}`;
+                    }
+                    messages.push({
+                        role: 'user',
+                        data: text,
+                    });
+                }
+
+                // 메시지 저장
+                if (messages.length > 0) {
+                    chat.message.push(...messages);
+                    await db.saveChat(userId, chatId, chat);
+                }
+
                 return {
-                    success: false,
-                    error: 'PO file processing not implemented yet',
+                    success: true,
+                    data: { messageCount: messages.length },
                 };
             }
             case 'txt': {
@@ -265,20 +366,128 @@ export async function processMultisendFile(
             }
             case 'csv': {
                 // CSV 파일 처리
-                // TODO: CSV 파싱 로직 구현
+                // 간단한 CSV 파싱 (쉼표로 구분, 첫 번째 줄은 헤더로 간주)
+                const lines = fileContent.split('\n').filter(line => line.trim());
+                if (lines.length === 0) {
+                    return {
+                        success: false,
+                        error: 'CSV file is empty',
+                    };
+                }
+
+                const messages: any[] = [];
+                const headers = lines[0].split(',').map(h => h.trim());
+
+                // 헤더에서 'message' 또는 'text' 컬럼 찾기
+                const messageColIndex = headers.findIndex(
+                    h => h.toLowerCase() === 'message' || h.toLowerCase() === 'text' || h.toLowerCase() === 'data'
+                );
+
+                if (messageColIndex === -1) {
+                    // 메시지 컬럼이 없으면 첫 번째 컬럼 사용
+                    for (let i = 1; i < lines.length; i++) {
+                        const values = lines[i].split(',');
+                        if (values[0] && values[0].trim()) {
+                            messages.push({
+                                role: 'user',
+                                data: values[0].trim(),
+                            });
+                        }
+                    }
+                } else {
+                    // 메시지 컬럼 사용
+                    for (let i = 1; i < lines.length; i++) {
+                        const values = lines[i].split(',');
+                        if (values[messageColIndex] && values[messageColIndex].trim()) {
+                            messages.push({
+                                role: 'user',
+                                data: values[messageColIndex].trim(),
+                            });
+                        }
+                    }
+                }
+
+                // 메시지 저장
+                if (messages.length > 0) {
+                    chat.message.push(...messages);
+                    await db.saveChat(userId, chatId, chat);
+                }
+
                 return {
-                    success: false,
-                    error: 'CSV file processing not implemented yet',
+                    success: true,
+                    data: { messageCount: messages.length },
                 };
             }
             case 'json': {
                 // JSON 파일 처리
+                // 지원하는 JSON 구조:
+                // 1. 배열 형태: [{role: 'user', data: '...'}, ...]
+                // 2. 객체 형태: {messages: [{role: 'user', data: '...'}, ...]}
+                // 3. 단순 배열: ['message1', 'message2', ...]
                 try {
                     const data = JSON.parse(fileContent);
-                    // TODO: JSON 구조에 따라 메시지 생성
+                    const messages: any[] = [];
+
+                    if (Array.isArray(data)) {
+                        // 배열 형태
+                        if (data.length > 0 && typeof data[0] === 'string') {
+                            // 단순 문자열 배열
+                            for (const text of data) {
+                                if (text && typeof text === 'string' && text.trim()) {
+                                    messages.push({
+                                        role: 'user',
+                                        data: text.trim(),
+                                    });
+                                }
+                            }
+                        } else {
+                            // 객체 배열 (role, data 포함)
+                            for (const item of data) {
+                                if (item && typeof item === 'object') {
+                                    const role = item.role === 'char' ? 'char' : 'user';
+                                    const dataText = item.data || item.text || item.message || '';
+                                    if (dataText && typeof dataText === 'string' && dataText.trim()) {
+                                        messages.push({
+                                            role,
+                                            data: dataText.trim(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    } else if (data && typeof data === 'object') {
+                        // 객체 형태
+                        const messageArray = data.messages || data.message || data.chat || [];
+                        if (Array.isArray(messageArray)) {
+                            for (const item of messageArray) {
+                                if (item && typeof item === 'object') {
+                                    const role = item.role === 'char' ? 'char' : 'user';
+                                    const dataText = item.data || item.text || item.message || '';
+                                    if (dataText && typeof dataText === 'string' && dataText.trim()) {
+                                        messages.push({
+                                            role,
+                                            data: dataText.trim(),
+                                        });
+                                    }
+                                } else if (typeof item === 'string' && item.trim()) {
+                                    messages.push({
+                                        role: 'user',
+                                        data: item.trim(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // 메시지 저장
+                    if (messages.length > 0) {
+                        chat.message.push(...messages);
+                        await db.saveChat(userId, chatId, chat);
+                    }
+
                     return {
                         success: true,
-                        data,
+                        data: { messageCount: messages.length },
                     };
                 } catch (error) {
                     return {

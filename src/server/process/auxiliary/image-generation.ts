@@ -5,6 +5,8 @@
 
 import type { character, Database } from '../../database';
 import type { ImageGenerationResult } from './types';
+import type { OpenAIChat } from '../types';
+import { requestChatData } from '../request';
 
 /**
  * ComfyUI 이미지 생성
@@ -214,16 +216,67 @@ async function waitForComfyUIImage(
 /**
  * stableDiff 함수 (서버 사이드)
  * 프롬프트 생성 후 ComfyUI로 이미지 생성
+ * 원본: src/ts/process/stableDiff.ts의 stableDiff
  */
 export async function stableDiff(
     character: character,
     prompt: string,
-    database: Database
+    database: Database,
+    userId: string
 ): Promise<ImageGenerationResult> {
     // 프롬프트 생성 (LLM 사용)
-    // TODO: requestChatData를 사용하여 프롬프트 생성
-    // 현재는 직접 ComfyUI 호출만 구현
+    if (character.newGenData?.instructions) {
+        const promptItem = `Chat:\n${prompt}`;
 
+        const promptbody: OpenAIChat[] = [
+            {
+                role: 'system',
+                content: character.newGenData.instructions,
+            },
+            {
+                role: 'user',
+                content: promptItem,
+            },
+        ];
+
+        const rq = await requestChatData(
+            {
+                formated: promptbody,
+                currentChar: character,
+                temperature: 0.2,
+                maxTokens: 300,
+                bias: {},
+                useStreaming: false,
+                noMultiGen: true,
+            },
+            'submodel',
+            database,
+            null,
+            userId
+        );
+
+        if (rq.type === 'fail') {
+            return {
+                success: false,
+                error: rq.result,
+            };
+        }
+
+        if (rq.type === 'streaming' || rq.type === 'multiline') {
+            return {
+                success: false,
+                error: 'Unexpected response type',
+            };
+        }
+
+        const generatedPrompt = rq.result;
+        const genPrompt = character.newGenData.prompt?.replaceAll('{{slot}}', generatedPrompt) || generatedPrompt;
+        const neg = character.newGenData.negative || '';
+
+        return await generateImageWithComfyUI(genPrompt, neg, character, database);
+    }
+
+    // 프롬프트 생성 없이 직접 사용
     const genPrompt = character.newGenData?.prompt?.replaceAll('{{slot}}', prompt) || prompt;
     const neg = character.newGenData?.negative || '';
 

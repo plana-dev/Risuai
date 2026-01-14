@@ -142,8 +142,7 @@ async function generateVoiceVoxTTS(
 
     try {
         // 일본어로 번역 (필요한 경우)
-        // TODO: translateVox 함수 서버 사이드로 마이그레이션
-        const jpText = text; // 임시로 원본 텍스트 사용
+        const jpText = await translateVox(text, database);
 
         // Audio Query 생성
         const queryResponse = await fetch(
@@ -213,16 +212,95 @@ async function generateVoiceVoxTTS(
 
 /**
  * VITS TTS (서버 사이드)
+ * @huggingface/transformers를 사용하여 서버 사이드에서 VITS TTS 생성
  */
 async function generateVITSTTS(
     text: string,
     character: character,
     database: Database
 ): Promise<TTSGenerationResult> {
-    // TODO: runVITS 함수 서버 사이드로 마이그레이션
-    // 현재는 기본 구조만 제공
-    return {
-        success: false,
-        error: 'VITS TTS not implemented yet',
-    };
+    if (!character.vits) {
+        return {
+            success: false,
+            error: 'VITS model is not configured',
+        };
+    }
+
+    try {
+        // @huggingface/transformers를 사용하여 TTS 생성
+        // Note: 서버 사이드에서는 transformers.js를 사용해야 함
+        const { pipeline } = await import('@huggingface/transformers');
+        const { WaveFile } = await import('wavefile');
+
+        const modelData = character.vits;
+        const modelId = typeof modelData === 'string' ? modelData : modelData.id;
+
+        // Pipeline 생성 (캐싱 고려)
+        // TODO: Pipeline 인스턴스를 캐싱하여 재사용
+        const synthesizer = await pipeline('text-to-speech', modelId);
+
+        // TTS 생성
+        const output = await synthesizer(text, {});
+
+        // WAV 파일 생성
+        const wav = new WaveFile();
+        wav.fromScratch(1, output.sampling_rate, '32f', output.audio);
+        const wavBuffer = wav.toBuffer();
+
+        // Base64로 변환
+        const base64 = Buffer.from(wavBuffer).toString('base64');
+
+        return {
+            success: true,
+            audioData: `data:audio/wav;base64,${base64}`,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        };
+    }
+}
+
+/**
+ * translateVox: 영어를 일본어로 번역 (VOICEVOX용)
+ * 원본: src/ts/translator/translator.ts의 translateVox
+ */
+async function translateVox(text: string, database: Database): Promise<string> {
+    if (!text || text.trim().length === 0) {
+        return text;
+    }
+
+    // 간단한 Google Translate API 호출
+    // TODO: 데이터베이스 설정에 따라 다른 번역 서비스 사용 (DeepL, LLM 등)
+    try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=en&tl=ja&q=${encodeURIComponent(text)}`;
+        const response = await fetch(url, {
+            method: 'GET',
+        });
+
+        if (!response.ok) {
+            console.warn('[TTS] Translation failed, using original text');
+            return text;
+        }
+
+        const res = await response.json();
+
+        if (typeof res === 'string') {
+            return res;
+        }
+
+        if (!res[0] || res[0].length === 0) {
+            return text;
+        }
+
+        const result = (res[0].map((s: any) => s[0]).filter(Boolean).join('') as string)
+            .replace(/\* ([^*]+)\*/g, '*$1*')
+            .replace(/\*([^*]+) \*/g, '*$1*');
+
+        return result;
+    } catch (error) {
+        console.error('[TTS] Translation error:', error);
+        return text; // 에러 발생 시 원본 텍스트 반환
+    }
 }
