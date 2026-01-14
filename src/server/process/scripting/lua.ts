@@ -27,6 +27,7 @@ import { loadLoreBookV3Prompt, type LorebookLoadContext } from '../lorebook';
 import { getPersonaPrompt, getUserName, getUserIcon } from '../../util';
 import { readImage } from '../../util/image';
 import { asBuffer } from '../../../ts/util';
+import { setCharacter } from '../../database/access';
 
 interface LuaEngineState {
   code?: string;
@@ -377,6 +378,13 @@ export async function runScripted(
   const defaultSetVar = async (key: string, value: string) => {
     scriptVars[key] = value;
     await redis.setScriptVars(userId, characterId, chatId, scriptVars);
+    // chat.scriptstate에도 저장
+    if (engineState.chat) {
+      engineState.chat.scriptstate ??= {};
+      engineState.chat.scriptstate['$' + key] = value;
+      // 데이터베이스에 저장
+      await db.saveChat(userId, engineState.chat);
+    }
   };
 
   const defaultGetVar = (key: string) => {
@@ -430,11 +438,11 @@ export async function runScripted(
         return engineState.getVar!(key);
       });
 
-      declareAPI('setChatVar', (id: string, key: string, value: string) => {
+      declareAPI('setChatVar', async (id: string, key: string, value: string) => {
         if (!scriptingSafeIds.has(id) && !scriptingEditDisplayIds.has(id)) {
           return;
         }
-        engineState.setVar!(key, value);
+        await engineState.setVar!(key, value);
       });
 
       declareAPI('getGlobalVar', (id: string, key: string) => {
@@ -504,56 +512,78 @@ export async function runScripted(
         return JSON.stringify(data);
       });
 
-      declareAPI('setChat', (id: string, index: number, value: string) => {
+      declareAPI('setChat', async (id: string, index: number, value: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         const message = engineState.chat?.message?.at(index);
         if (message) {
           message.data = value ?? '';
+          // 데이터베이스에 저장
+          if (engineState.chat) {
+            await db.saveChat(userId, engineState.chat);
+          }
         }
       });
 
-      declareAPI('setChatRole', (id: string, index: number, value: string) => {
+      declareAPI('setChatRole', async (id: string, index: number, value: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         const message = engineState.chat?.message?.at(index);
         if (message) {
           message.role = value === 'user' ? 'user' : 'char';
+          // 데이터베이스에 저장
+          if (engineState.chat) {
+            await db.saveChat(userId, engineState.chat);
+          }
         }
       });
 
-      declareAPI('cutChat', (id: string, start: number, end: number) => {
+      declareAPI('cutChat', async (id: string, start: number, end: number) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         if (engineState.chat?.message) {
           engineState.chat.message = engineState.chat.message.slice(start, end);
+          // 데이터베이스에 저장
+          await db.saveChat(userId, engineState.chat);
         }
       });
 
-      declareAPI('removeChat', (id: string, index: number) => {
+      declareAPI('removeChat', async (id: string, index: number) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         engineState.chat?.message.splice(index, 1);
+        // 데이터베이스에 저장
+        if (engineState.chat) {
+          await db.saveChat(userId, engineState.chat);
+        }
       });
 
-      declareAPI('addChat', (id: string, role: string, value: string) => {
+      declareAPI('addChat', async (id: string, role: string, value: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         const roleData: 'user' | 'char' = role === 'user' ? 'user' : 'char';
         engineState.chat?.message.push({ role: roleData, data: value ?? '' });
+        // 데이터베이스에 저장
+        if (engineState.chat) {
+          await db.saveChat(userId, engineState.chat);
+        }
       });
 
-      declareAPI('insertChat', (id: string, index: number, role: string, value: string) => {
+      declareAPI('insertChat', async (id: string, index: number, role: string, value: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
         const roleData: 'user' | 'char' = role === 'user' ? 'user' : 'char';
         engineState.chat?.message.splice(index, 0, { role: roleData, data: value ?? '' });
+        // 데이터베이스에 저장
+        if (engineState.chat) {
+          await db.saveChat(userId, engineState.chat);
+        }
       });
 
       declareAPI('getTokens', async (id: string, value: string) => {
@@ -581,7 +611,7 @@ export async function runScripted(
         return data;
       });
 
-      declareAPI('setFullChatMain', (id: string, value: string) => {
+      declareAPI('setFullChatMain', async (id: string, value: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
@@ -591,6 +621,8 @@ export async function runScripted(
             role: v.role,
             data: v.data,
           }));
+          // 데이터베이스에 저장
+          await db.saveChat(userId, engineState.chat);
         }
       });
 
@@ -920,7 +952,7 @@ export async function runScripted(
         return char?.name || '';
       });
 
-      declareAPI('setName', (id: string, name: string) => {
+      declareAPI('setName', async (id: string, name: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
@@ -928,7 +960,8 @@ export async function runScripted(
           throw 'Invalid data type';
         }
         char.name = name;
-        // TODO: 데이터베이스에 저장
+        // 데이터베이스에 저장
+        await setCharacter(userId, characterId, char);
       });
 
       declareAPI('getDescription', (id: string) => {
@@ -941,7 +974,7 @@ export async function runScripted(
         return char.desc || '';
       });
 
-      declareAPI('setDescription', (id: string, desc: string) => {
+      declareAPI('setDescription', async (id: string, desc: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
@@ -952,14 +985,15 @@ export async function runScripted(
           throw 'Character is a group';
         }
         char.desc = desc;
-        // TODO: 데이터베이스에 저장
+        // 데이터베이스에 저장
+        await setCharacter(userId, characterId, char);
       });
 
       declareAPI('getCharacterFirstMessage', (id: string) => {
         return char?.firstMessage || '';
       });
 
-      declareAPI('setCharacterFirstMessage', (id: string, data: string) => {
+      declareAPI('setCharacterFirstMessage', async (id: string, data: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
@@ -967,7 +1001,8 @@ export async function runScripted(
           return false;
         }
         char.firstMessage = data;
-        // TODO: 데이터베이스에 저장
+        // 데이터베이스에 저장
+        await setCharacter(userId, characterId, char);
         return true;
       });
 
@@ -996,7 +1031,7 @@ export async function runScripted(
         return char.backgroundHTML || '';
       });
 
-      declareAPI('setBackgroundEmbedding', (id: string, data: string) => {
+      declareAPI('setBackgroundEmbedding', async (id: string, data: string) => {
         if (!scriptingSafeIds.has(id)) {
           return;
         }
@@ -1007,7 +1042,8 @@ export async function runScripted(
           return false;
         }
         char.backgroundHTML = data;
-        // TODO: 데이터베이스에 저장
+        // 데이터베이스에 저장
+        await setCharacter(userId, characterId, char);
         return true;
       });
 
@@ -1027,7 +1063,7 @@ export async function runScripted(
         return JSON.stringify(found.map((b) => ({ ...b, content: risuChatParser(b.content, { chara: char }, parserContexts) })));
       });
 
-      declareAPI('upsertLocalLoreBook', (
+      declareAPI('upsertLocalLoreBook', async (
         id: string,
         name: string,
         content: string,
@@ -1072,7 +1108,8 @@ export async function runScripted(
           useRegex: regex,
         });
         engineState.chat.localLore = newLocalLoreBooks;
-        // TODO: 데이터베이스에 저장
+        // 데이터베이스에 저장
+        await db.saveChat(userId, engineState.chat);
       });
 
       declareAPI('loadLoreBooksMain', async (id: string, reserve: number) => {
