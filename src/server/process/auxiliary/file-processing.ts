@@ -13,9 +13,8 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Database } from '../../database';
 import { getDatabaseAdapter } from '../../database-adapter';
 import { getRedisService } from '../../redis-service';
-// TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
-import { checkImageType } from '../../../ts/parser.svelte';
-import { asBuffer } from '../../../ts/util';
+import { asBuffer } from '../../util';
+import sharp from 'sharp';
 
 const inlayImageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'];
 const inlayAudioExts = ['wav', 'mp3', 'ogg', 'flac'];
@@ -120,6 +119,90 @@ export async function getInlayAsset(userId: string, assetId: string): Promise<In
     } catch (error) {
         console.error('[File Processing] Error getting inlay asset:', error);
         return null;
+    }
+}
+
+/**
+ * 이미지를 Inlay 에셋으로 저장 (서버 사이드)
+ * 원본: src/ts/process/files/inlays.ts의 writeInlayImage
+ * 
+ * @param imageData - 이미지 데이터 (Uint8Array 또는 Buffer)
+ * @param arg - 옵션 (name, ext, id)
+ * @param userId - 사용자 ID
+ * @returns 에셋 ID
+ */
+export async function writeInlayImage(
+    imageData: Uint8Array | Buffer,
+    arg: { name?: string; ext?: string; id?: string } = {},
+    userId: string
+): Promise<string> {
+    const imgid = arg.id ?? uuidv4();
+    const redis = getRedisService();
+    
+    // 이미지 리사이징 (최대 1024x1024 픽셀)
+    let processedData = imageData instanceof Buffer ? imageData : Buffer.from(imageData);
+    
+    try {
+        // sharp를 사용하여 이미지 메타데이터 및 리사이징
+        const image = sharp(processedData);
+        const metadata = await image.metadata();
+        
+        let width = metadata.width || 0;
+        let height = metadata.height || 0;
+        
+        // 최대 픽셀 수 제한 (1024x1024)
+        const maxPixels = 1024 * 1024;
+        const currentPixels = width * height;
+        
+        if (currentPixels > maxPixels) {
+            const scaleFactor = Math.sqrt(maxPixels / currentPixels);
+            width = Math.floor(width * scaleFactor);
+            height = Math.floor(height * scaleFactor);
+            
+            // 리사이징
+            processedData = await image
+                .resize(width, height, {
+                    fit: 'inside',
+                    withoutEnlargement: true,
+                })
+                .png()
+                .toBuffer();
+        } else {
+            // PNG로 변환 (일관성을 위해)
+            processedData = await image.png().toBuffer();
+        }
+        
+        // Base64로 변환
+        const base64 = processedData.toString('base64');
+        
+        const asset: InlayAsset = {
+            id: imgid,
+            name: arg.name ?? imgid,
+            type: 'image',
+            data: `data:image/png;base64,${base64}`,
+            ext: 'png',
+            width,
+            height,
+        };
+        
+        await redis.setInlayAsset(userId, imgid, asset);
+        
+        return imgid;
+    } catch (error) {
+        console.error('[File Processing] Error processing image:', error);
+        // 에러 발생 시 원본 데이터를 그대로 저장
+        const base64 = processedData.toString('base64');
+        const asset: InlayAsset = {
+            id: imgid,
+            name: arg.name ?? imgid,
+            type: 'image',
+            data: `data:image/${arg.ext || 'png'};base64,${base64}`,
+            ext: arg.ext || 'png',
+            width: 0,
+            height: 0,
+        };
+        await redis.setInlayAsset(userId, imgid, asset);
+        return imgid;
     }
 }
 

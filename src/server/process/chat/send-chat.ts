@@ -18,6 +18,7 @@ import { loadLoreBookV3Prompt } from '../lorebook';
 import { runTrigger } from '../trigger';
 import { requestChatData } from '../request';
 import { tokenize } from '../../tokenizer';
+import { updateContextChat } from '../context';
 // TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
 import { exampleMessage } from '../example-messages';
 import { processScript, processScriptFull } from '../auxiliary/scripts';
@@ -28,12 +29,12 @@ import { hypaMemoryV2 } from '../memory/hypa-v2';
 import { hypaMemoryV3 } from '../memory/hypa-v3';
 // Util functions are now available via ProcessContext
 // import { getPersonaPrompt, getUserName, getAuthorNoteDefaultText, findCharacterbyId, parseToggleSyntax, prebuiltAssetCommand } from '../../util';
-import { parseToggleSyntax, prebuiltAssetCommand } from '../../util';
+import { parseToggleSyntax, prebuiltAssetCommand, trimUntilPunctuation } from '../../util';
 import { additionalInformations } from '../auxiliary/additional-info';
 import { getInlayAsset } from '../auxiliary/file-processing';
 import { getGenerationModelString } from '../auxiliary/model-string';
 import { getModuleAssets, getModuleToggles, getModuleLorebooks } from '../auxiliary/modules';
-import { readImage } from '../../../ts/globalApi.svelte';
+import { readImage } from '../../util/image';
 import { asBuffer } from '../../util';
 import { getModelInfo } from '../../model/modellist-server';
 import { LLMFlags } from '../../model/modellist';
@@ -289,8 +290,277 @@ export async function sendChat(
         });
     }
 
-    // TODO: 프롬프트 템플릿 처리, 토큰 계산, 메모리 시스템 처리 등
-    // 현재는 기본 구조만 제공
+    // 프롬프트 템플릿 처리 준비
+    let currentTokens = database.maxResponse;
+    let supaMemoryCardUsed = false;
+    let hasCachePoint = false;
+    
+    // 예상치 못한 에러를 위한 여유 토큰
+    currentTokens += 50;
+    
+    // Position parser 및 injection lorebook 처리
+    const injectionLorebooks = lorepmt.actives.filter(v => {
+        return v.inject && !v.inject.lore;
+    });
+    
+    const injectionLorePosSet = new Set<string>();
+    for (const lorebook of injectionLorebooks) {
+        if (lorebook.inject?.location) {
+            injectionLorePosSet.add(lorebook.inject.location);
+        }
+    }
+    
+    const positionRegex = /{{position::(.+?)}}/g;
+    const positionParser = (text: string, loc: string): string => {
+        if (injectionLorePosSet.has(loc)) {
+            const matchings = injectionLorebooks.filter(v => {
+                return v.inject?.location === loc;
+            });
+            for (const lore of matchings) {
+                if (!lore.inject) continue;
+                switch (lore.inject.operation) {
+                    case 'append': {
+                        text += ' ' + lore.prompt;
+                        break;
+                    }
+                    case 'prepend': {
+                        text = lore.prompt + ' ' + text;
+                        break;
+                    }
+                    case 'replace': {
+                        text = text.replace(lore.inject.param, lore.prompt);
+                        break;
+                    }
+                }
+            }
+        }
+        return text.replace(positionRegex, (match, p1) => {
+            const matchingLorebooks = lorepmt.actives.filter(v => {
+                return v.pos === ('pt_' + p1);
+            });
+            return matchingLorebooks.map(v => v.prompt).join('\n');
+        });
+    };
+    
+    // pushPrompts 함수
+    let formated: OpenAIChat[] = [];
+    const pushPrompts = (cha: OpenAIChat[]): void => {
+        for (const chat of cha) {
+            if (!chat.content.trim() && !(chat.multimodals && chat.multimodals.length > 0)) {
+                continue;
+            }
+            if (!(database.aiModel.startsWith('gpt') || database.aiModel.startsWith('claude') || database.aiModel === 'openrouter' || database.aiModel === 'reverse_proxy')) {
+                formated.push(chat);
+                continue;
+            }
+            if (chat.role === 'system') {
+                const endf = formated.at(-1);
+                if (endf && endf.role === 'system' && endf.memo === chat.memo && endf.name === chat.name) {
+                    formated[formated.length - 1].content += '\n\n' + chat.content;
+                } else {
+                    formated.push(chat);
+                }
+            } else {
+                formated.push(chat);
+            }
+        }
+    };
+    
+    // 토큰 계산 함수
+    const tokenizeChatArray = async (chats: OpenAIChat[]): Promise<void> => {
+        for (const chat of chats) {
+            const tokens = await context.chatTokenizer.tokenizeChat(chat, tokenizerContext);
+            currentTokens += tokens;
+        }
+    };
+    
+    // 프롬프트 템플릿 처리
+    if (promptTemplate) {
+        // postEverything 카드가 없으면 추가
+        let hasPostEverything = false;
+        for (const card of promptTemplate) {
+            if (card.type === 'postEverything') {
+                hasPostEverything = true;
+                break;
+            }
+        }
+        if (!hasPostEverything) {
+            promptTemplate.push({
+                type: 'postEverything'
+            } as any);
+        }
+        
+        // 각 카드 타입별 처리
+        for (const card of promptTemplate) {
+            switch (card.type) {
+                case 'persona': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.personaPrompt));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content);
+                        }
+                    }
+                    await tokenizeChatArray(pmt);
+                    break;
+                }
+                case 'description': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.description));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content);
+                        }
+                    }
+                    await tokenizeChatArray(pmt);
+                    break;
+                }
+                case 'authornote': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.authorNote));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content || card.defaultText || '');
+                        }
+                    }
+                    await tokenizeChatArray(pmt);
+                    break;
+                }
+                case 'lorebook': {
+                    await tokenizeChatArray(unformated.lorebook);
+                    break;
+                }
+                case 'postEverything': {
+                    await tokenizeChatArray(unformated.postEverything);
+                    if (usingPromptTemplate && database.promptSettings?.postEndInnerFormat) {
+                        await tokenizeChatArray([{
+                            role: 'system',
+                            content: database.promptSettings.postEndInnerFormat
+                        }]);
+                    }
+                    break;
+                }
+                case 'plain':
+                case 'jailbreak':
+                case 'cot': {
+                    if ((!database.jailbreakToggle) && (card.type === 'jailbreak')) {
+                        continue;
+                    }
+                    if ((!database.chainOfThought) && (card.type === 'cot')) {
+                        continue;
+                    }
+                    
+                    const convertRole = {
+                        "system": "system",
+                        "user": "user",
+                        "bot": "assistant"
+                    } as const;
+                    
+                    const posType = card.type === 'plain' ? card.type2 : card.type;
+                    let content = positionParser(card.text || '', posType || '');
+                    
+                    if (card.type2 === 'globalNote') {
+                        if (currentChar.replaceGlobalNote) {
+                            content = positionParser(currentChar.replaceGlobalNote, posType || '').replaceAll('{{original}}', content);
+                        }
+                        if (currentChar.prebuiltAssetCommand && !card.text?.includes('{{//@customimageinstruction}}')) {
+                            content += prebuiltAssetCommand;
+                        }
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    } else if (card.type2 === 'main') {
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    } else {
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    }
+                    
+                    const prompt: OpenAIChat = {
+                        role: convertRole[card.role || 'system'],
+                        content: content
+                    };
+                    
+                    await tokenizeChatArray([prompt]);
+                    break;
+                }
+                case 'chatML': {
+                    let prompts = parseChatML(card.text || '', parserContexts);
+                    if (prompts) {
+                        await tokenizeChatArray(prompts);
+                    }
+                    break;
+                }
+                case 'chat': {
+                    let start = card.rangeStart ?? 0;
+                    let end = (card.rangeEnd === 'end') ? chats.length : (card.rangeEnd ?? chats.length);
+                    if (start === -1000) {
+                        start = 0;
+                        end = chats.length;
+                    }
+                    if (start < 0) {
+                        start = chats.length + start;
+                        if (start < 0) {
+                            start = 0;
+                        }
+                    }
+                    if (end < 0) {
+                        end = chats.length + end;
+                        if (end < 0) {
+                            end = 0;
+                        }
+                    }
+                    
+                    if (start >= end) {
+                        break;
+                    }
+                    let chatSlice = chats.slice(start, end);
+                    
+                    if (usingPromptTemplate && database.promptSettings?.sendChatAsSystem && (!card.chatAsOriginalOnSystem)) {
+                        // systemizeChat 함수는 나중에 구현
+                        // chatSlice = systemizeChat(chatSlice);
+                    }
+                    await tokenizeChatArray(chatSlice);
+                    break;
+                }
+                case 'memory': {
+                    supaMemoryCardUsed = true;
+                    break;
+                }
+                case 'cache': {
+                    hasCachePoint = true;
+                    break;
+                }
+            }
+        }
+    } else {
+        // 프롬프트 템플릿이 없는 경우 모든 unformated를 토큰 계산
+        for (const key in unformated) {
+            const chatArray = unformated[key as keyof UnformatedPrompts] as OpenAIChat[];
+            for (const chat of chatArray) {
+                currentTokens += await context.chatTokenizer.tokenizeChat(chat, tokenizerContext);
+            }
+        }
+    }
+    
+    // Depth prompts 처리 (토큰 계산만)
+    const depthPrompts = lorepmt.actives.filter(v => {
+        return (v.pos === 'depth' && v.depth > 0) || v.pos === 'reverse_depth';
+    });
+    
+    for (const depthPrompt of depthPrompts) {
+        const chat: OpenAIChat = {
+            role: depthPrompt.role,
+            content: risuChatParser(depthPrompt.prompt, { chara: currentChar }, parserContexts)
+        };
+        currentTokens += await context.chatTokenizer.tokenizeChat(chat, tokenizerContext);
+    }
 
     // 예제 메시지
     const examples = exampleMessage(currentChar, context.getUserName(), context);
@@ -448,19 +718,527 @@ export async function sendChat(
         index++;
     }
 
-    // TODO: 프롬프트 템플릿 처리, 메모리 시스템 처리, 토큰 재계산 등
-
-    // API 요청
-    if (arg.preview) {
-        return {
-            success: true,
-            previewFormated: chats,
-        };
+    // 메모리 시스템 통합
+    let memories: OpenAIChat[] = [];
+    if (nowChatroom.supaMemory && (database.supaModelType !== 'none' || database.hanuraiEnable || database.hypav2 || database.hypaV3)) {
+        stageTimings.stage1Duration = Date.now() - stageTimings.stage1Start;
+        stageTimings.stage2Start = Date.now();
+        
+        if (database.hanuraiEnable) {
+            const hn = await hanuraiMemory(
+                chats,
+                {
+                    currentTokens,
+                    maxContextTokens,
+                    tokenizer: context.chatTokenizer,
+                    tokenizerContext,
+                },
+                database,
+                userId
+            );
+            
+            if (hn === false) {
+                return {
+                    success: false,
+                    error: 'HanuraiMemory processing failed',
+                };
+            }
+            
+            chats = hn.chats;
+            currentTokens = hn.tokens;
+        } else if (database.hypav2) {
+            const sp = await hypaMemoryV2(
+                chats,
+                currentTokens,
+                maxContextTokens,
+                currentChatData,
+                nowChatroom,
+                context.chatTokenizer,
+                tokenizerContext,
+                database,
+                userId
+            );
+            
+            if (sp.error) {
+                console.error('[HypaMemoryV2 Error]', sp.error);
+                return {
+                    success: false,
+                    error: sp.error,
+                };
+            }
+            
+            chats = sp.chats;
+            currentTokens = sp.currentTokens;
+            if (sp.memory) {
+                currentChatData.hypaV2Data = sp.memory;
+                await updateContextChat(context, (chat) => {
+                    chat.hypaV2Data = sp.memory;
+                    return chat;
+                });
+            }
+        } else if (database.hypaV3) {
+            const sp = await hypaMemoryV3(
+                chats,
+                currentTokens,
+                maxContextTokens,
+                currentChatData,
+                nowChatroom,
+                context.chatTokenizer,
+                tokenizerContext,
+                database,
+                userId
+            );
+            
+            if (sp.error) {
+                // Save new summary
+                if (sp.memory) {
+                    currentChatData.hypaV3Data = sp.memory;
+                    await updateContextChat(context, (chat) => {
+                        chat.hypaV3Data = sp.memory;
+                        return chat;
+                    });
+                }
+                console.error('[HypaMemoryV3 Error]', sp.error);
+                return {
+                    success: false,
+                    error: sp.error,
+                };
+            }
+            
+            chats = sp.chats;
+            currentTokens = sp.currentTokens;
+            if (sp.memory) {
+                currentChatData.hypaV3Data = sp.memory;
+                await updateContextChat(context, (chat) => {
+                    chat.hypaV3Data = sp.memory;
+                    return chat;
+                });
+            }
+        } else {
+            const sp = await supaMemory(
+                chats,
+                currentTokens,
+                maxContextTokens,
+                currentChatData,
+                nowChatroom,
+                context.chatTokenizer,
+                tokenizerContext,
+                {
+                    asHyper: database.hypaMemory,
+                },
+                database,
+                userId
+            );
+            
+            if (sp.error) {
+                console.error('[SupaMemory Error]', sp.error);
+                return {
+                    success: false,
+                    error: sp.error,
+                };
+            }
+            
+            chats = sp.chats;
+            currentTokens = sp.currentTokens;
+            if (sp.memory) {
+                currentChatData.supaMemoryData = sp.memory;
+                await updateContextChat(context, (chat) => {
+                    chat.supaMemoryData = sp.memory;
+                    return chat;
+                });
+            }
+            if (sp.lastId) {
+                currentChatData.lastMemory = sp.lastId;
+                await updateContextChat(context, (chat) => {
+                    chat.lastMemory = sp.lastId;
+                    return chat;
+                });
+            }
+        }
+        
+        stageTimings.stage2Duration = Date.now() - stageTimings.stage2Start;
+    } else {
+        stageTimings.stage1Duration = Date.now() - stageTimings.stage1Start;
+        
+        // 토큰 제한 처리
+        while (currentTokens > maxContextTokens) {
+            if (chats.length <= 1) {
+                return {
+                    success: false,
+                    error: `Too much token required. Required Tokens: ${currentTokens}`,
+                };
+            }
+            
+            currentTokens -= await context.chatTokenizer.tokenizeChat(chats[0], tokenizerContext);
+            chats.splice(0, 1);
+        }
+        
+        if (chats.length > 0) {
+            currentChatData.lastMemory = chats[0].memo;
+        }
     }
-
+    
+    // Biases 처리
+    let biases: [string, number][] = database.bias.concat(currentChar.bias).map((v) => {
+        return [
+            risuChatParser(
+                v[0].replaceAll('\\n', '\n').replaceAll('\\r', '\r').replaceAll('\\\\', '\\'),
+                { chara: currentChar },
+                parserContexts
+            ),
+            v[1]
+        ];
+    });
+    
+    // 프롬프트 템플릿 최종 포맷팅 준비
+    if (!promptTemplate) {
+        unformated.lastChat.push(chats[chats.length - 1]);
+        chats.splice(chats.length - 1, 1);
+    }
+    
+    unformated.chats = chats.map((v) => {
+        if (v.memo !== 'supaMemory' && v.memo !== 'hypaMemory') {
+            v.removable = true;
+        } else if (supaMemoryCardUsed) {
+            memories.push(v);
+            return {
+                role: 'system',
+                content: '',
+            } as OpenAIChat;
+        } else {
+            v.content = `<Previous Conversation>${v.content}</Previous Conversation>`;
+        }
+        return v;
+    }).filter((v) => {
+        return v.content.trim() !== '' || (v.multimodals && v.multimodals.length > 0);
+    });
+    
+    // Depth prompts를 unformated.chats에 삽입
+    for (const depthPrompt of depthPrompts) {
+        const chat: OpenAIChat = {
+            role: depthPrompt.role,
+            content: risuChatParser(depthPrompt.prompt, { chara: currentChar }, parserContexts)
+        };
+        const depth = depthPrompt.pos === 'depth' 
+            ? depthPrompt.depth 
+            : (unformated.chats.length - depthPrompt.depth);
+        unformated.chats.splice(depth, 0, chat);
+    }
+    
+    // Trigger 결과를 unformated에 추가
+    if (triggerResult) {
+        if (triggerResult.additonalSysPrompt?.promptend) {
+            unformated.postEverything.push({
+                role: 'system',
+                content: triggerResult.additonalSysPrompt.promptend
+            });
+        }
+        if (triggerResult.additonalSysPrompt?.historyend) {
+            unformated.lastChat.push({
+                role: 'system',
+                content: triggerResult.additonalSysPrompt.historyend
+            });
+        }
+        if (triggerResult.additonalSysPrompt?.start) {
+            unformated.lastChat.unshift({
+                role: 'system',
+                content: triggerResult.additonalSysPrompt.start
+            });
+        }
+    }
+    
+    // Continue chat 모델 처리
+    if (arg.continue && (database.aiModel.startsWith('claude') || database.aiModel.startsWith('gpt') || database.aiModel === 'openrouter' || database.aiModel === 'reverse_proxy')) {
+        unformated.postEverything.push({
+            role: 'system',
+            content: '[Continue the last response]'
+        });
+    }
+    
+    // systemizeChat 함수
+    const systemizeChat = (chat: OpenAIChat[]): OpenAIChat[] => {
+        for (let i = 0; i < chat.length; i++) {
+            if (chat[i].role === 'user' || chat[i].role === 'assistant') {
+                const attr = chat[i].attr ?? [];
+                if (chat[i].name?.startsWith('example_')) {
+                    chat[i].content = chat[i].name + ': ' + chat[i].content;
+                } else if (!attr.includes('nameAdded')) {
+                    chat[i].content = chat[i].role + ': ' + chat[i].content;
+                }
+                chat[i].role = 'system';
+            }
+        }
+        return chat;
+    };
+    
+    // 프롬프트 템플릿 최종 포맷팅
+    if (promptTemplate) {
+        const template = promptTemplate;
+        
+        for (const card of template) {
+            switch (card.type) {
+                case 'persona': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.personaPrompt));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content);
+                        }
+                    }
+                    pushPrompts(pmt);
+                    break;
+                }
+                case 'description': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.description));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content);
+                        }
+                    }
+                    pushPrompts(pmt);
+                    break;
+                }
+                case 'authornote': {
+                    let pmt = JSON.parse(JSON.stringify(unformated.authorNote));
+                    if (card.innerFormat && pmt.length > 0) {
+                        for (let i = 0; i < pmt.length; i++) {
+                            pmt[i].content = risuChatParser(
+                                positionParser(card.innerFormat, card.type),
+                                { chara: currentChar },
+                                parserContexts
+                            ).replace('{{slot}}', pmt[i].content || card.defaultText || '');
+                        }
+                    }
+                    pushPrompts(pmt);
+                    break;
+                }
+                case 'lorebook': {
+                    pushPrompts(unformated.lorebook);
+                    break;
+                }
+                case 'postEverything': {
+                    pushPrompts(unformated.postEverything);
+                    if (usingPromptTemplate && database.promptSettings?.postEndInnerFormat) {
+                        pushPrompts([{
+                            role: 'system',
+                            content: database.promptSettings.postEndInnerFormat
+                        }]);
+                    }
+                    break;
+                }
+                case 'plain':
+                case 'jailbreak':
+                case 'cot': {
+                    if ((!database.jailbreakToggle) && (card.type === 'jailbreak')) {
+                        continue;
+                    }
+                    if ((!database.chainOfThought) && (card.type === 'cot')) {
+                        continue;
+                    }
+                    
+                    const convertRole = {
+                        "system": "system",
+                        "user": "user",
+                        "bot": "assistant"
+                    } as const;
+                    
+                    const posType = card.type === 'plain' ? card.type2 : card.type;
+                    let content = positionParser(card.text || '', posType || '');
+                    
+                    if (card.type2 === 'globalNote') {
+                        if (currentChar.replaceGlobalNote) {
+                            content = positionParser(currentChar.replaceGlobalNote, posType || '').replaceAll('{{original}}', content);
+                        }
+                        if (currentChar.prebuiltAssetCommand && !card.text?.includes('{{//@customimageinstruction}}')) {
+                            content += prebuiltAssetCommand;
+                        }
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    } else if (card.type2 === 'main') {
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    } else {
+                        content = risuChatParser(content, { chara: currentChar, role: card.role }, parserContexts);
+                    }
+                    
+                    const prompt: OpenAIChat = {
+                        role: convertRole[card.role || 'system'],
+                        content: content
+                    };
+                    
+                    pushPrompts([prompt]);
+                    break;
+                }
+                case 'chatML': {
+                    let prompts = parseChatML(card.text || '', parserContexts);
+                    if (prompts) {
+                        pushPrompts(prompts);
+                    }
+                    break;
+                }
+                case 'chat': {
+                    let start = card.rangeStart ?? 0;
+                    let end = (card.rangeEnd === 'end') ? unformated.chats.length : (card.rangeEnd ?? unformated.chats.length);
+                    if (start === -1000) {
+                        start = 0;
+                        end = unformated.chats.length;
+                    }
+                    if (start < 0) {
+                        start = unformated.chats.length + start;
+                        if (start < 0) {
+                            start = 0;
+                        }
+                    }
+                    if (end < 0) {
+                        end = unformated.chats.length + end;
+                        if (end < 0) {
+                            end = 0;
+                        }
+                    }
+                    
+                    if (start >= end) {
+                        break;
+                    }
+                    let chatSlice = unformated.chats.slice(start, end);
+                    
+                    if (usingPromptTemplate && database.promptSettings?.sendChatAsSystem && (!card.chatAsOriginalOnSystem)) {
+                        chatSlice = systemizeChat(chatSlice);
+                    }
+                    pushPrompts(chatSlice);
+                    
+                    // Automatic cache point 처리
+                    if (database.automaticCachePoint && !hasCachePoint) {
+                        let pointer = formated.length - 1;
+                        let depthRemaining = 3;
+                        while (pointer >= 0) {
+                            if (depthRemaining === 0) {
+                                break;
+                            }
+                            if (formated[pointer].role === 'user') {
+                                formated[pointer].cachePoint = true;
+                                depthRemaining--;
+                            }
+                            pointer--;
+                        }
+                    }
+                    break;
+                }
+                case 'cache': {
+                    let pointer = formated.length - 1;
+                    let depthRemaining = card.depth;
+                    while (pointer >= 0) {
+                        if (depthRemaining === 0) {
+                            break;
+                        }
+                        if (formated[pointer].role === card.role || card.role === 'all') {
+                            formated[pointer].cachePoint = true;
+                            depthRemaining--;
+                        }
+                        pointer--;
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        // 프롬프트 템플릿이 없는 경우 formatOrder 사용
+        const formatOrder = database.formatingOrder ? JSON.parse(JSON.stringify(database.formatingOrder)) : null;
+        if (formatOrder) {
+            formatOrder.push('postEverything');
+            for (let i = 0; i < formatOrder.length; i++) {
+                const cha = unformated[formatOrder[i] as keyof UnformatedPrompts] as OpenAIChat[];
+                pushPrompts(cha);
+            }
+        } else {
+            // 기본 순서
+            pushPrompts(unformated.main);
+            pushPrompts(unformated.jailbreak);
+            pushPrompts(unformated.globalNote);
+            pushPrompts(unformated.description);
+            pushPrompts(unformated.authorNote);
+            pushPrompts(unformated.personaPrompt);
+            pushPrompts(unformated.lorebook);
+            pushPrompts(unformated.chats);
+            pushPrompts(unformated.lastChat);
+            pushPrompts(unformated.postEverything);
+        }
+    }
+    
+    // formated 배열 정리
+    formated = formated.map((v) => {
+        v.content = v.content.trim();
+        return v;
+    });
+    
+    // depth_prompt 처리
+    if (currentChar.depth_prompt && currentChar.depth_prompt.prompt && currentChar.depth_prompt.prompt.length > 0) {
+        const depthPrompt = currentChar.depth_prompt;
+        formated.splice(formated.length - depthPrompt.depth, 0, {
+            role: 'system',
+            content: risuChatParser(depthPrompt.prompt, { chara: currentChar }, parserContexts)
+        });
+    }
+    
+    // runLuaEditTrigger (editRequest)
+    formated = await runLuaEditTrigger(
+        context.userId,
+        context.currentCharacterId || '',
+        context.currentChatId || '',
+        currentChar,
+        'editRequest',
+        formated,
+        database,
+        tokenizerContext
+    );
+    
+    // 토큰 재계산 및 제거
+    let inputTokens = 0;
+    for (const chat of formated) {
+        inputTokens += await context.chatTokenizer.tokenizeChat(chat, tokenizerContext);
+    }
+    
+    if (inputTokens > maxContextTokens) {
+        let pointer = 0;
+        while (inputTokens > maxContextTokens) {
+            if (pointer >= formated.length) {
+                return {
+                    success: false,
+                    error: `Too much token at token rechecking. Required Tokens: ${inputTokens}`,
+                };
+            }
+            if (formated[pointer].removable) {
+                inputTokens -= await context.chatTokenizer.tokenizeChat(formated[pointer], tokenizerContext);
+                formated[pointer].content = '';
+            }
+            pointer++;
+        }
+        formated = formated.filter((v) => {
+            return v.content !== '' || (v.multimodals && v.multimodals.length > 0);
+        });
+    }
+    
+    // Output tokens 추정
+    let outputTokens = database.maxResponse;
+    if (inputTokens + outputTokens > maxContextTokens) {
+        outputTokens = maxContextTokens - inputTokens;
+    }
+    
     stageTimings.stage3Start = Date.now();
     const generationId = uuidv4();
     const generationModel = getGenerationModelString(database);
+    
+    // Preview 모드
+    if (arg.preview) {
+        return {
+            success: true,
+            previewFormated: formated,
+        };
+    }
 
     const generationInfo: MessageGenerationInfo = {
         model: generationModel,
@@ -504,16 +1282,261 @@ export async function sendChat(
         };
     }
 
-    // TODO: 스트리밍 처리, 후처리 등
-
+    // 스트리밍 처리 및 후처리
+    let result = '';
+    let emoChanged = false;
+    let resendChat = false;
+    
+    if (abortSignal?.aborted === true) {
+        return {
+            success: false,
+            error: 'Request aborted',
+        };
+    }
+    
+    // reformatContent 함수
+    const reformatContent = (data: string): string => {
+        return data.trim();
+    };
+    
+    if (req.type === 'streaming') {
+        // 스트리밍 처리
+        const reader = req.result.getReader();
+        let msgIndex = currentChatData.message.length;
+        let prefix = '';
+        
+        if (arg.continue) {
+            msgIndex -= 1;
+            prefix = currentChatData.message[msgIndex]?.data || '';
+        } else {
+            // 새 메시지 추가
+            currentChatData.message.push({
+                role: 'char',
+                data: '',
+                saying: currentChar.chaId,
+                time: Date.now(),
+                generationInfo,
+                chatId: generationId,
+            });
+        }
+        
+        let lastResponseChunk: { [key: string]: string } = {};
+        
+        while (abortSignal?.aborted === false) {
+            const readed = await reader.read();
+            if (readed.value) {
+                lastResponseChunk = readed.value;
+                const firstChunkKey = Object.keys(lastResponseChunk)[0];
+                result = lastResponseChunk[firstChunkKey] || '';
+                
+                if (database.removeIncompleteResponse) {
+                    result = trimUntilPunctuation(result);
+                }
+                
+                let result2 = await processScriptFull(
+                    nowChatroom,
+                    reformatContent(prefix + result),
+                    'editoutput',
+                    context,
+                    msgIndex
+                );
+                
+                currentChatData.message[msgIndex].data = result2.data;
+                emoChanged = result2.emoChanged;
+                
+                // 스트리밍 중 데이터베이스 업데이트 (최적화를 위해 주기적으로만 저장)
+                if (msgIndex % 5 === 0) { // 5개 메시지마다 저장
+                    await updateContextChat(context, (chat) => {
+                        chat.message[msgIndex].data = result2.data;
+                        return chat;
+                    });
+                }
+            }
+            
+            if (readed.done) {
+                break;
+            }
+        }
+        
+        // addRerolls 처리 (나중에 구현)
+        // addRerolls(generationId, Object.values(lastResponseChunk));
+        
+        // runCurrentChatFunction 처리
+        currentChatData = runCurrentChatFunction(currentChatData);
+        
+        // Trigger 실행 (output)
+        const outputTriggerResult = await runTrigger(currentChar, 'output', {
+            chat: currentChatData,
+            database,
+            tokenizerContext,
+            userId: context.userId || '',
+            characterId: context.currentCharacterId || '',
+            chatId: context.currentChatId || '',
+        });
+        
+        if (outputTriggerResult) {
+            if (outputTriggerResult.chat) {
+                currentChatData = outputTriggerResult.chat;
+            }
+            if (outputTriggerResult.sendAIprompt) {
+                resendChat = true;
+            }
+        }
+        
+        // 스트리밍 완료 후 최종 저장
+        await updateContextChat(context, (chat) => {
+            chat.message = currentChatData.message;
+            chat.isStreaming = false;
+            return chat;
+        });
+        
+        // runInlayScreen 처리 (나중에 구현)
+        // const inlayr = runInlayScreen(currentChar, currentChatData.message[msgIndex].data);
+        // currentChatData.message[msgIndex].data = inlayr.text;
+        // if (inlayr.promise) {
+        //     const t = await inlayr.promise;
+        //     currentChatData.message[msgIndex].data = t;
+        // }
+        
+        // TTS 처리 (나중에 구현)
+        // if (database.ttsAutoSpeech) {
+        //     await sayTTS(currentChar, result);
+        // }
+    } else if (req.type === 'success' || req.type === 'multiline') {
+        // 비스트리밍 처리
+        const msgs = req.type === 'success' 
+            ? [['char', req.result] as const]
+            : req.type === 'multiline'
+            ? req.result
+            : [];
+        
+        let mrerolls: string[] = [];
+        
+        for (let i = 0; i < msgs.length; i++) {
+            let msg = msgs[i];
+            let mess = msg[1];
+            let msgIndex = currentChatData.message.length;
+            
+            let result2 = await processScriptFull(
+                nowChatroom,
+                reformatContent(mess),
+                'editoutput',
+                context,
+                msgIndex
+            );
+            
+            if (i === 0 && arg.continue) {
+                msgIndex -= 1;
+                let beforeChat = currentChatData.message[msgIndex];
+                result2 = await processScriptFull(
+                    nowChatroom,
+                    reformatContent(beforeChat.data + mess),
+                    'editoutput',
+                    context,
+                    msgIndex
+                );
+            }
+            
+            if (database.removeIncompleteResponse) {
+                result2.data = trimUntilPunctuation(result2.data);
+            }
+            
+            result = result2.data;
+            emoChanged = result2.emoChanged;
+            
+            // runInlayScreen 처리 (나중에 구현)
+            // const inlayResult = runInlayScreen(currentChar, result);
+            // result = inlayResult.text;
+            
+            if (i === 0 && arg.continue) {
+                currentChatData.message[msgIndex] = {
+                    ...currentChatData.message[msgIndex],
+                    data: result,
+                };
+            } else {
+                currentChatData.message.push({
+                    role: 'char',
+                    data: result,
+                    saying: currentChar.chaId,
+                    time: Date.now(),
+                    generationInfo,
+                    chatId: generationId,
+                });
+            }
+            
+            mrerolls.push(result);
+        }
+        
+        // addRerolls 처리 (나중에 구현)
+        // addRerolls(generationId, mrerolls);
+        
+        // runCurrentChatFunction 처리
+        currentChatData = runCurrentChatFunction(currentChatData);
+        
+        // Trigger 실행 (output)
+        const outputTriggerResult = await runTrigger(currentChar, 'output', {
+            chat: currentChatData,
+            database,
+            tokenizerContext,
+            userId: context.userId || '',
+            characterId: context.currentCharacterId || '',
+            chatId: context.currentChatId || '',
+        });
+        
+        if (outputTriggerResult) {
+            if (outputTriggerResult.chat) {
+                currentChatData = outputTriggerResult.chat;
+            }
+            if (outputTriggerResult.sendAIprompt) {
+                resendChat = true;
+            }
+        }
+        
+        // 비스트리밍 완료 후 최종 저장
+        await updateContextChat(context, (chat) => {
+            chat.message = currentChatData.message;
+            return chat;
+        });
+    }
+    
+    // 최종 데이터베이스 저장
+    await updateContextChat(context, (chat) => {
+        chat.message = currentChatData.message;
+        chat.note = currentChatData.note;
+        chat.localLore = currentChatData.localLore;
+        chat.sdData = currentChatData.sdData;
+        chat.supaMemoryData = currentChatData.supaMemoryData;
+        chat.hypaV2Data = currentChatData.hypaV2Data;
+        chat.hypaV3Data = currentChatData.hypaV3Data;
+        chat.lastMemory = currentChatData.lastMemory;
+        chat.suggestMessages = currentChatData.suggestMessages;
+        chat.isStreaming = false;
+        chat.scriptstate = currentChatData.scriptstate;
+        chat.modules = currentChatData.modules;
+        return chat;
+    });
+    
+    stageTimings.stage3Duration = Date.now() - stageTimings.stage3Start;
+    stageTimings.stage4Start = Date.now();
     stageTimings.stage4Duration = Date.now() - stageTimings.stage4Start;
+    
     if (generationInfo.stageTiming) {
         generationInfo.stageTiming.stage3 = stageTimings.stage3Duration;
         generationInfo.stageTiming.stage4 = stageTimings.stage4Duration;
     }
-
+    
+    generationInfo.inputTokens = inputTokens;
+    generationInfo.outputTokens = outputTokens;
+    
+    // 모델 정보 업데이트
+    if (req.model) {
+        generationInfo.model = getGenerationModelString(database, req.model);
+    }
+    
     return {
         success: true,
         generationInfo,
+        resendChat,
+        emoChanged,
     };
 }

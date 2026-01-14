@@ -27,6 +27,8 @@ export interface SendChatResult {
     generationInfo?: MessageGenerationInfo;
     previewFormated?: OpenAIChat[];
     previewBody?: string;
+    resendChat?: boolean;
+    emoChanged?: boolean;
 }
 
 /**

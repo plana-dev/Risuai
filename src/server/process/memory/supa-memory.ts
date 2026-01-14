@@ -12,16 +12,11 @@ import type { SupaMemoryResult, SupaMemoryArg, HypaData } from './types';
 import { tokenize } from '../../tokenizer';
 import type { TokenizerContext } from '../../tokenizer';
 import { HypaProcessor } from './hypa-processor';
-// TODO: stringlize 모듈을 서버 사이드로 마이그레이션
-import { stringlizeChat } from '../../../ts/process/stringlize';
-// TODO: transformers 모듈을 서버 사이드로 마이그레이션
-import { runSummarizer } from '../../../ts/process/transformers';
-import { parseChatML } from '../../../ts/parser/chatML';
+import { stringlizeChat } from '../auxiliary/stringlize';
+import { parseChatML } from '../../parser';
 import { requestChatData } from '../request';
-// TODO: util 모듈에 getUserName 추가 또는 원본에서 import
-import { getUserName } from '../../../ts/util';
-// TODO: globalFetch를 서버 사이드 HTTP 클라이언트로 교체
-import { globalFetch } from '../../../ts/globalApi.svelte';
+import { getUserName } from '../../util/database';
+import { getUserName } from '../../util/database';
 
 /**
  * SupaMemory 처리
@@ -202,8 +197,33 @@ export async function supaMemory(
         async function summarize(stringlizedChat: string): Promise<string | SupaMemoryResult> {
             if (database.supaModelType === 'distilbart') {
                 try {
-                    const sum = await runSummarizer(stringlizedChat);
-                    return sum;
+                    // 서버 사이드에서는 LLM API를 사용하여 요약
+                    const summaryResponse = await requestChatData(
+                        {
+                            formated: [
+                                {
+                                    role: 'system',
+                                    content: 'Summarize the following conversation in a concise way, preserving important details and context.',
+                                },
+                                {
+                                    role: 'user',
+                                    content: stringlizedChat,
+                                },
+                            ],
+                            useStreaming: false,
+                            bias: {},
+                        },
+                        'memory',
+                        database,
+                        null,
+                        userId
+                    );
+                    
+                    if (summaryResponse.type === 'success') {
+                        return summaryResponse.result;
+                    } else {
+                        throw new Error(summaryResponse.result);
+                    }
                 } catch (error) {
                     return {
                         currentTokens: currentTokens,
@@ -223,13 +243,13 @@ export async function supaMemory(
             if (database.supaModelType !== 'subModel') {
                 const promptbody = stringlizedChat + '\n\n' + supaPrompt + '\n\nOutput:';
 
-                const da = await globalFetch('https://api.openai.com/v1/completions', {
+                const da = await fetch('https://api.openai.com/v1/completions', {
                     headers: {
                         'Content-Type': 'application/json',
                         Authorization: 'Bearer ' + database.supaMemoryKey,
                     },
                     method: 'POST',
-                    body: {
+                    body: JSON.stringify({
                         model:
                             database.supaModelType === 'curie'
                                 ? 'text-curie-001'
@@ -239,25 +259,27 @@ export async function supaMemory(
                         prompt: promptbody,
                         max_tokens: 600,
                         temperature: 0,
-                    },
+                    }),
                 });
 
                 try {
                     if (!da.ok) {
+                        const errorData = await da.json();
                         return {
                             currentTokens: currentTokens,
                             chats: chats,
-                            error: 'SupaMemory: HTTP: ' + JSON.stringify(da.data),
+                            error: 'SupaMemory: HTTP: ' + JSON.stringify(errorData),
                         };
                     }
 
-                    result = (await da.data)?.choices[0]?.text?.trim();
+                    const data = await da.json();
+                    result = data?.choices[0]?.text?.trim();
 
                     if (!result) {
                         return {
                             currentTokens: currentTokens,
                             chats: chats,
-                            error: 'SupaMemory: HTTP: ' + JSON.stringify(da.data),
+                            error: 'SupaMemory: HTTP: ' + JSON.stringify(errorData),
                         };
                     }
 
@@ -354,7 +376,8 @@ export async function supaMemory(
                 if (chunkSize + tokens > maxChunkSize) {
                     if (stringlizedChat === '') {
                         if (cont.role !== 'function' && cont.role !== 'system') {
-                            stringlizedChat += `${cont.role === 'assistant' ? (char.type === 'group' ? '' : char.name) : getUserName()}: ${cont.content}\n\n`;
+                            const userName = await getUserName(userId, room.id, database);
+                            stringlizedChat += `${cont.role === 'assistant' ? (char.type === 'group' ? '' : char.name) : userName}: ${cont.content}\n\n`;
                             spiceLen += 1;
                             currentTokens -= tokens;
                             chunkSize += tokens;
@@ -363,7 +386,8 @@ export async function supaMemory(
                     lastId = cont.memo || '';
                     break;
                 }
-                stringlizedChat += `${cont.role === 'assistant' ? (char.type === 'group' ? '' : char.name) : getUserName()}: ${cont.content}\n\n`;
+                const userName = await getUserName(userId, room.id, database);
+                stringlizedChat += `${cont.role === 'assistant' ? (char.type === 'group' ? '' : char.name) : userName}: ${cont.content}\n\n`;
                 spiceLen += 1;
                 currentTokens -= tokens;
                 chunkSize += tokens;

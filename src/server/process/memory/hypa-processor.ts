@@ -10,10 +10,8 @@ import type { Database } from '../../database';
 import { chunkArray, similarity, localModels } from './base';
 import { appendLastPath } from '../../util';
 import { getRedisService } from '../../redis-service';
-// TODO: transformers 모듈을 서버 사이드로 마이그레이션 후 import 경로 수정
-import { runEmbedding } from '../../../ts/process/transformers';
-// TODO: globalFetch를 서버 사이드 HTTP 클라이언트로 교체
-import { globalFetch } from '../../../ts/globalApi.svelte';
+// runEmbedding은 서버 사이드에서 API 호출로 구현
+// TODO: 로컬 모델 지원을 위해 transformers 모듈 마이그레이션 필요
 
 /**
  * HypaMemory 프로세서 클래스
@@ -71,14 +69,11 @@ export class HypaProcessor {
     async getEmbeds(input: string[] | string, database?: Database): Promise<VectorArray[]> {
         const inputs: string[] = Array.isArray(input) ? input : [input];
 
-        // 로컬 모델 사용
+        // 로컬 모델 사용 (TODO: 서버 사이드 transformers 모듈 마이그레이션 필요)
         if (Object.keys(localModels.models).includes(this.model)) {
-            const results: Float32Array[] = await runEmbedding(
-                inputs,
-                localModels.models[this.model as keyof typeof localModels.models],
-                localModels.gpuModels.includes(this.model as any) ? 'webgpu' : 'wasm'
-            );
-            return results;
+            // 서버 사이드에서는 로컬 모델을 사용할 수 없으므로 에러 반환
+            // TODO: 서버 사이드 transformers 모듈 마이그레이션 후 구현
+            throw new Error(`Local model ${this.model} is not yet supported in server-side. Please use OpenAI or custom embedding models.`);
         }
 
         let gf = null;
@@ -106,7 +101,31 @@ export class HypaProcessor {
                 },
             };
 
-            gf = await globalFetch(replaceUrl.toString(), fetchArgs);
+            const response = await fetch(replaceUrl.toString(), {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(database?.hypaCustomSettings?.key?.trim()
+                        ? { Authorization: 'Bearer ' + database.hypaCustomSettings.key.trim() }
+                        : {}),
+                },
+                method: 'POST',
+                body: JSON.stringify({
+                    input: inputs,
+                    ...(database?.hypaCustomSettings?.model?.trim()
+                        ? { model: database.hypaCustomSettings.model.trim() }
+                        : {}),
+                }),
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(JSON.stringify(errorData));
+            }
+            
+            gf = {
+                ok: response.ok,
+                data: await response.json(),
+            };
         }
 
         // OpenAI 모델
@@ -117,15 +136,27 @@ export class HypaProcessor {
                 openai3large: 'text-embedding-3-large',
             };
 
-            gf = await globalFetch('https://api.openai.com/v1/embeddings', {
+            const response = await fetch('https://api.openai.com/v1/embeddings', {
                 headers: {
+                    'Content-Type': 'application/json',
                     Authorization: 'Bearer ' + (this.oaikey?.trim() || database?.supaMemoryKey?.trim() || ''),
                 },
-                body: {
-                    input: input,
+                method: 'POST',
+                body: JSON.stringify({
+                    input: inputs,
                     model: models[this.model],
-                },
+                }),
             });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(JSON.stringify(errorData));
+            }
+            
+            gf = {
+                ok: response.ok,
+                data: await response.json(),
+            };
         }
 
         const data = gf?.data;

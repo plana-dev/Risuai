@@ -21,11 +21,11 @@ import { HypaProcessor } from '../memory/hypa-processor';
 import { requestChatData } from '../request';
 // TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
 import { generateAIImage } from '../../../ts/process/stableDiff';
-import { writeInlayImage, getInlayAsset } from '../../../ts/process/files/inlays';
+import { writeInlayImage, getInlayAsset } from '../auxiliary/file-processing';
 import { getModuleLorebooks } from '../auxiliary/modules';
 import { loadLoreBookV3Prompt, type LorebookLoadContext } from '../lorebook';
 import { getPersonaPrompt, getUserName, getUserIcon } from '../../util';
-import { readImage } from '../../../ts/globalApi.svelte';
+import { readImage } from '../../util/image';
 import { asBuffer } from '../../../ts/util';
 
 interface LuaEngineState {
@@ -745,12 +745,9 @@ export async function runScripted(
           }
 
           const img = await readImage(icon);
-          const imgObj = new Image();
-          const extention = icon.split('.').at(-1);
+          const extention = icon.split('.').at(-1) || 'png';
 
-          imgObj.src = URL.createObjectURL(new Blob([asBuffer(img)], {type: `image/${extention}`}));
-
-          const imgid = await writeInlayImage(imgObj, { name: icon, ext: extention, id: icon});
+          const imgid = await writeInlayImage(img, { name: icon, ext: extention, id: icon }, userId);
 
           if (imgid) {
             return `{{inlayed::${imgid}}}`;

@@ -319,6 +319,61 @@ export class DatabaseAdapter {
   }
 
   /**
+   * 채팅 데이터 저장
+   */
+  async saveChat(userId: string, chat: any): Promise<void> {
+    if (!chat.id) {
+      throw new Error('Chat ID is required');
+    }
+
+    // Redis에 즉시 업데이트
+    const chatKey = `chat:${userId}:${chat.id}`;
+    await this.redis.set(chatKey, chat, 3600); // 1시간 TTL
+
+    // Prisma를 통해 DB에 저장 (비동기)
+    await prisma.chat.update({
+      where: {
+        id: chat.id,
+      },
+      data: {
+        name: chat.name,
+        note: chat.note,
+        sdData: chat.sdData ? JSON.stringify(chat.sdData) : null,
+        supaMemoryData: chat.supaMemoryData ? JSON.stringify(chat.supaMemoryData) : null,
+        hypaV2Data: chat.hypaV2Data ? JSON.stringify(chat.hypaV2Data) : null,
+        hypaV3Data: chat.hypaV3Data ? JSON.stringify(chat.hypaV3Data) : null,
+        lastMemory: chat.lastMemory,
+        suggestMessages: chat.suggestMessages ? JSON.stringify(chat.suggestMessages) : null,
+        isStreaming: chat.isStreaming || false,
+        scriptstate: chat.scriptstate ? JSON.stringify(chat.scriptstate) : null,
+        modules: chat.modules ? JSON.stringify(chat.modules) : null,
+        bindedPersona: chat.bindedPersona,
+        fmIndex: chat.fmIndex,
+        folderId: chat.folderId,
+        lastDate: chat.lastDate,
+        bookmarks: chat.bookmarks ? JSON.stringify(chat.bookmarks) : null,
+        bookmarkNames: chat.bookmarkNames ? JSON.stringify(chat.bookmarkNames) : null,
+        updatedAt: new Date(),
+        messages: {
+          deleteMany: {},
+          create: chat.message?.map((msg: any) => ({
+            role: msg.role,
+            data: msg.data,
+            saying: msg.saying,
+            time: new Date(msg.time),
+            generationInfo: msg.generationInfo ? JSON.stringify(msg.generationInfo) : null,
+            promptInfo: msg.promptInfo ? JSON.stringify(msg.promptInfo) : null,
+            chatId: msg.chatId,
+          })) || [],
+        },
+      },
+    }).catch((error) => {
+      console.error('Failed to save chat to database:', error);
+      // Redis에는 저장되었으므로 계속 진행
+    });
+  }
+
+  /**
    * 연결 종료
    */
   async disconnect(): Promise<void> {

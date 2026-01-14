@@ -9,7 +9,7 @@ import type { OpenAIChat } from '../types';
 import type { ChatTokenizer, TokenizerContext } from '../../tokenizer';
 import { requestChatData } from '../request';
 import { HypaProcessor } from './hypa-processor';
-import { runSummarizer } from '../../../ts/process/transformers'; // TODO: 서버 사이드로 마이그레이션
+// runSummarizer는 서버 사이드에서 requestChatData를 사용하여 구현
 import { stringlizeChat } from '../auxiliary/stringlize';
 
 export interface HypaV2Data {
@@ -56,8 +56,33 @@ async function summary(
 
     if (database.supaModelType === "distilbart") {
         try {
-            const sum = await runSummarizer(stringlizedChat);
-            return { success: true, data: sum };
+            // 서버 사이드에서는 LLM API를 사용하여 요약
+            const summaryResponse = await requestChatData(
+                {
+                    formated: [
+                        {
+                            role: 'system',
+                            content: 'Summarize the following conversation in a concise way, preserving important details and context.',
+                        },
+                        {
+                            role: 'user',
+                            content: stringlizedChat,
+                        },
+                    ],
+                    useStreaming: false,
+                    bias: {},
+                },
+                'memory',
+                database,
+                null,
+                userId
+            );
+            
+            if (summaryResponse.type === 'success') {
+                return { success: true, data: summaryResponse.result };
+            } else {
+                throw new Error(typeof summaryResponse.result === 'string' ? summaryResponse.result : JSON.stringify(summaryResponse.result));
+            }
         } catch (error) {
             return {
                 success: false,
