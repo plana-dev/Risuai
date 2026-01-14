@@ -1,18 +1,29 @@
 /**
- * Lua Engine 서비스
+ * Lua 스크립팅 엔진
+ * 원본: src/ts/process/scriptings.ts (Lua 부분만)
  * 서버 사이드에서 Lua 스크립트 실행
- * 기존 src/ts/process/scriptings.ts의 로직을 서버 환경에 맞게 재구현
  */
 
 import { LuaEngine, LuaFactory } from 'wasmoon';
-import { getRedisService } from './redis-service';
-import { getDatabaseAdapter } from './database-adapter';
-import type { Database, character, Chat, triggerscript } from './database';
+import { getRedisService } from '../../redis-service';
+import { getDatabaseAdapter } from '../../database-adapter';
+import type { Database, character, Chat, triggerscript } from '../../database';
 import { v4 as uuidv4 } from 'uuid';
-import { Mutex, hasher } from './util';
-import { risuChatParser } from './parser';
-import { tokenize } from './tokenizer';
-import type { OpenAIChat } from './process/types';
+import { Mutex } from '../../../ts/mutex';
+import { risuChatParser, hasher } from '../../../ts/parser.svelte';
+import { tokenize } from '../../tokenizer';
+import type { OpenAIChat } from '../types';
+import type { TokenizerContext } from '../../tokenizer';
+import { HypaProcessor } from '../memory/hypa-processor';
+import { requestChatData } from '../request';
+// TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
+import { generateAIImage } from '../../../ts/process/stableDiff';
+import { writeInlayImage, getInlayAsset } from '../../../ts/process/files/inlays';
+import { getModuleLorebooks } from '../../../ts/process/modules';
+import { loadLoreBookV3Prompt, type LorebookLoadContext } from '../lorebook';
+import { getPersonaPrompt, getUserName, getUserIcon } from '../../util';
+import { readImage } from '../../../ts/globalApi.svelte';
+import { asBuffer } from '../../../ts/util';
 
 interface LuaEngineState {
   code?: string;
@@ -43,12 +54,11 @@ let lastRequestsCount = 0;
 async function makeLuaFactory(): Promise<void> {
   const _luaFactory = new LuaFactory();
   
-  // json.lua 파일 로드 (서버 환경에서는 파일 시스템에서 읽기)
+  // json.lua 파일 로드
   async function mountFile(name: string): Promise<void> {
     let code = '';
     try {
       // 서버 환경에서는 public/lua/ 또는 static 파일에서 읽기
-      // 실제 구현에서는 파일 시스템이나 정적 리소스에서 로드
       for(let i = 0; i < 3; i++){
         try {
             const res = await fetch('/lua/' + name)
@@ -93,7 +103,6 @@ async function ensureLuaFactory(): Promise<void> {
 
 /**
  * 엔진 상태 가져오기 또는 생성
- * 사용자별, 캐릭터별, 채팅별로 격리하여 다중 사용자 환경 지원
  */
 async function getOrCreateEngineState(
   userId: string,
@@ -101,7 +110,6 @@ async function getOrCreateEngineState(
   chatId: string,
   mode: string
 ): Promise<LuaEngineState> {
-  // 사용자별, 캐릭터별, 채팅별, 모드별로 고유 키 생성
   const engineKey = `${userId}:${characterId}:${chatId}:${mode}`;
 
   let engineState = luaEngines.get(engineKey);
@@ -128,7 +136,7 @@ async function getOrCreateEngineState(
 }
 
 /**
- * Lua 코드 래퍼 (기존 구현과 동일)
+ * Lua 코드 래퍼
  */
 function luaCodeWrapper(code: string): string {
   return `
@@ -283,7 +291,7 @@ ${code}
 /**
  * 서버 사이드 Lua 스크립트 실행
  */
-export async function runServerScript(
+export async function runScripted(
   code: string,
   arg: {
     userId: string;
@@ -297,6 +305,8 @@ export async function runServerScript(
     lowLevelAccess?: boolean;
     meta?: object;
     mode?: string;
+    database?: Database;
+    tokenizerContext?: TokenizerContext;
   }
 ): Promise<{ stopSending: boolean; chat?: Chat; res?: any }> {
   await ensureLuaFactory();
@@ -313,6 +323,8 @@ export async function runServerScript(
     lowLevelAccess = false,
     meta = {},
     mode = 'manual',
+    database,
+    tokenizerContext,
   } = arg;
 
   const redis = getRedisService();
@@ -321,7 +333,7 @@ export async function runServerScript(
   // Redis에서 스크립트 변수 가져오기
   const scriptVars = await redis.getScriptVars(userId, characterId, chatId) || {};
 
-  // setVar/getVar 기본 구현 (Redis 사용)
+  // setVar/getVar 기본 구현
   const defaultSetVar = async (key: string, value: string) => {
     scriptVars[key] = value;
     await redis.setScriptVars(userId, characterId, chatId, scriptVars);
@@ -342,6 +354,12 @@ export async function runServerScript(
 
   if (!chatData) {
     throw new Error('Chat not found');
+  }
+
+  // 데이터베이스 로드
+  let dbData = database;
+  if (!dbData) {
+    dbData = await db.loadDatabase(userId);
   }
 
   const engineState = await getOrCreateEngineState(userId, characterId, chatId, mode);
@@ -389,6 +407,48 @@ export async function runServerScript(
           return;
         }
         stopSending = true;
+      });
+
+      // Alert 함수들 (서버에서는 로깅으로 대체)
+      declareAPI('alertError', (id: string, value: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        console.error('[Lua Alert Error]', value);
+      });
+
+      declareAPI('alertNormal', (id: string, value: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        console.log('[Lua Alert]', value);
+      });
+
+      declareAPI('alertInput', (id: string, value: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        // 서버에서는 입력을 반환할 수 없으므로 빈 문자열 반환
+        console.log('[Lua Alert Input]', value);
+        return '';
+      });
+
+      declareAPI('alertSelect', (id: string, value: string[]) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        // 서버에서는 첫 번째 옵션 반환
+        console.log('[Lua Alert Select]', value);
+        return value[0] || '';
+      });
+
+      declareAPI('alertConfirm', (id: string, value: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        // 서버에서는 기본적으로 false 반환
+        console.log('[Lua Alert Confirm]', value);
+        return Promise.resolve(false);
       });
 
       declareAPI('getChatMain', (id: string, index: number) => {
@@ -460,7 +520,10 @@ export async function runServerScript(
         if (!scriptingSafeIds.has(id)) {
           return;
         }
-        return await tokenize(value);
+        if (!tokenizerContext) {
+          throw new Error('TokenizerContext is required');
+        }
+        return await tokenize(value, tokenizerContext);
       });
 
       declareAPI('getChatLength', (id: string) => {
@@ -510,11 +573,28 @@ export async function runServerScript(
         console.log('[Lua]', JSON.parse(value));
       });
 
-      declareAPI('hash', async (id: string, value: string) => {
-        return await hasher(new TextEncoder().encode(value));
+      // reloadDisplay, reloadChat은 서버에서는 불필요 (UI 전용)
+      declareAPI('reloadDisplay', (id: string) => {
+        // 서버에서는 아무 작업도 하지 않음
+      });
+
+      declareAPI('reloadChat', (id: string, index: number) => {
+        // 서버에서는 아무 작업도 하지 않음
       });
 
       // Low Level Access API
+      declareAPI('similarity', async (id: string, source: string, value: string[]) => {
+        if (!scriptingLowLevelIds.has(id)) {
+          return;
+        }
+        if (!dbData) {
+          throw new Error('Database is required');
+        }
+        const processer = new HypaProcessor('auto', undefined, userId, chatId, dbData);
+        await processer.addText(value, dbData);
+        return await processer.similaritySearch(source);
+      });
+
       declareAPI('request', async (id: string, url: string) => {
         if (!scriptingLowLevelIds.has(id)) {
           return;
@@ -575,17 +655,181 @@ export async function runServerScript(
         }
       });
 
-      // LLM API (서버에서 처리)
+      declareAPI('generateImage', async (id: string, value: string, negValue: string = '') => {
+        if (!scriptingLowLevelIds.has(id)) {
+          return;
+        }
+        if (!char || char.type !== 'character') {
+          return 'Error: Character is a group or invalid';
+        }
+        // TODO: 서버 사이드 이미지 생성 구현
+        const gen = await generateAIImage(value, char, negValue, 'inlay');
+        if (!gen) {
+          return 'Error: Image generation failed';
+        }
+        // 서버에서는 이미지 URL 또는 ID 반환
+        return `{{inlay::${gen}}}`;
+      });
+
+      declareAPI('getCharacterImageMain', async (id: string) => {
+        try {
+          if (!char || char.type === 'group' || !char.image) {
+            return '';
+          }
+          
+          const img = await readImage(char.image);
+          const imgObj = new Image();
+          const extention = char.image.split('.').at(-1);
+
+          imgObj.src = URL.createObjectURL(new Blob([asBuffer(img)], {type: `image/${extention}`}));
+
+          const imgid = await writeInlayImage(imgObj, { name: char.image, ext: extention, id: char.image});
+
+          if (imgid) {
+            return `{{inlayed::${imgid}}}`;
+          }
+          console.warn('Failed to create character image inlay');
+          return '';
+        } catch (error) {
+          console.error('Error in getCharacterImageMain:', error);
+          return '';
+        }
+      });
+
+      declareAPI('getPersonaImageMain', async (id: string) => {
+        try {
+          const icon = getUserIcon();
+
+          if(!icon) {
+            return '';
+          }
+
+          const img = await readImage(icon);
+          const imgObj = new Image();
+          const extention = icon.split('.').at(-1);
+
+          imgObj.src = URL.createObjectURL(new Blob([asBuffer(img)], {type: `image/${extention}`}));
+
+          const imgid = await writeInlayImage(imgObj, { name: icon, ext: extention, id: icon});
+
+          if (imgid) {
+            return `{{inlayed::${imgid}}}`;
+          }
+          
+          console.warn('Failed to create persona image inlay');
+          return '';
+        } catch (error) {
+          console.error('Error in getPersonaImageMain:', error);
+          return '';
+        }
+      });
+
+      declareAPI('hash', async (id: string, value: string) => {
+        return await hasher(new TextEncoder().encode(value));
+      });
+
+      // LLM API
       declareAPI('LLMMain', async (id: string, promptStr: string, useMultimodal: boolean = false) => {
         if (!scriptingLowLevelIds.has(id)) {
           return;
         }
+        if (!dbData) {
+          throw new Error('Database is required');
+        }
 
-        // TODO: 실제 LLM 요청 구현
-        // 현재는 기본 응답만 반환
+        let prompt: {
+          role: string;
+          content: string;
+        }[] = JSON.parse(promptStr);
+
+        let promptbody: OpenAIChat[] = prompt.map((dict) => {
+          let role: 'system' | 'user' | 'assistant' = 'assistant';
+          switch (dict['role']) {
+            case 'system':
+            case 'sys':
+              role = 'system';
+              break;
+            case 'user':
+              role = 'user';
+              break;
+            case 'assistant':
+            case 'bot':
+            case 'char': {
+              role = 'assistant';
+              break;
+            }
+          }
+
+          return {
+            content: dict['content'] ?? '',
+            role: role,
+          };
+        });
+
+        if (useMultimodal) {
+          for (const msg of promptbody) {
+            const inlays: string[] = [];
+            msg.content = msg.content.replace(/{{(inlay|inlayed|inlayeddata)::(.+?)}}/g, (
+              match: string,
+              p1: string,
+              p2: string
+            ) => {
+              if (msg.role === 'assistant') {
+                if (p2 && p1 === 'inlayeddata') {
+                  inlays.push(p2);
+                }
+              } else {
+                if (p2) {
+                  inlays.push(p2);
+                }
+              }
+              return '';
+            });
+            
+            const multimodals: any[] = [];
+            for (const inlay of inlays) {
+              const inlayData = await getInlayAsset(inlay);
+              multimodals.push({
+                type: inlayData?.type,
+                base64: inlayData?.data,
+                width: inlayData?.width,
+                height: inlayData?.height,
+              });
+            }
+
+            msg.multimodals = multimodals.length > 0 ? multimodals : undefined;
+          }
+        }
+
+        const result = await requestChatData(
+          {
+            formated: promptbody,
+            bias: {},
+            useStreaming: false,
+            noMultiGen: true,
+          },
+          'model',
+          dbData,
+          null
+        );
+
+        if (result.type === 'fail') {
+          return JSON.stringify({
+            success: false,
+            result: 'Error: ' + result.result,
+          });
+        }
+
+        if (result.type === 'streaming' || result.type === 'multiline') {
+          return JSON.stringify({
+            success: false,
+            result: result.result,
+          });
+        }
+
         return JSON.stringify({
-          success: false,
-          result: 'LLM API not implemented in server yet',
+          success: true,
+          result: result.result,
         });
       });
 
@@ -593,17 +837,59 @@ export async function runServerScript(
         if (!scriptingLowLevelIds.has(id)) {
           return;
         }
+        if (!dbData) {
+          throw new Error('Database is required');
+        }
 
-        // TODO: 실제 LLM 요청 구현
+        const result = await requestChatData(
+          {
+            formated: [{
+              role: 'user',
+              content: prompt,
+            }],
+            bias: {},
+            useStreaming: false,
+            noMultiGen: true,
+          },
+          'model',
+          dbData,
+          null
+        );
+
+        if (result.type === 'fail') {
+          return {
+            success: false,
+            result: 'Error: ' + result.result,
+          };
+        }
+
+        if (result.type === 'streaming' || result.type === 'multiline') {
+          return {
+            success: false,
+            result: result.result,
+          };
+        }
+
         return {
-          success: false,
-          result: 'LLM API not implemented in server yet',
+          success: true,
+          result: result.result,
         };
       });
 
       // 캐릭터 정보 API
       declareAPI('getName', (id: string) => {
         return char?.name || '';
+      });
+
+      declareAPI('setName', (id: string, name: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        if (!char || typeof name !== 'string') {
+          throw 'Invalid data type';
+        }
+        char.name = name;
+        // TODO: 데이터베이스에 저장
       });
 
       declareAPI('getDescription', (id: string) => {
@@ -616,28 +902,302 @@ export async function runServerScript(
         return char.desc || '';
       });
 
+      declareAPI('setDescription', (id: string, desc: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        if (!char || typeof desc !== 'string') {
+          throw 'Invalid data type';
+        }
+        if (char.type === 'group') {
+          throw 'Character is a group';
+        }
+        char.desc = desc;
+        // TODO: 데이터베이스에 저장
+      });
+
       declareAPI('getCharacterFirstMessage', (id: string) => {
         return char?.firstMessage || '';
       });
 
+      declareAPI('setCharacterFirstMessage', (id: string, data: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        if (!char || typeof data !== 'string') {
+          return false;
+        }
+        char.firstMessage = data;
+        // TODO: 데이터베이스에 저장
+        return true;
+      });
+
       declareAPI('getPersonaName', (id: string) => {
-        // TODO: 사용자 이름 가져오기
-        return '';
+        return getUserName();
       });
 
       declareAPI('getPersonaDescription', (id: string) => {
-        // TODO: 페르소나 프롬프트 가져오기
-        return '';
+        if (!char) {
+          return '';
+        }
+        return risuChatParser(getPersonaPrompt(), { chara: char });
       });
 
       declareAPI('getAuthorsNote', (id: string) => {
         return engineState.chat?.note ?? '';
       });
 
+      declareAPI('getBackgroundEmbedding', (id: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        if (!char || char.type !== 'character') {
+          return '';
+        }
+        return char.backgroundHTML || '';
+      });
+
+      declareAPI('setBackgroundEmbedding', (id: string, data: string) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+        if (!char || typeof data !== 'string') {
+          return false;
+        }
+        if (char.type !== 'character') {
+          return false;
+        }
+        char.backgroundHTML = data;
+        // TODO: 데이터베이스에 저장
+        return true;
+      });
+
+      // Lorebook API
+      declareAPI('getLoreBooksMain', (id: string, search: string) => {
+        if (!char || char.type !== 'character') {
+          return JSON.stringify([]);
+        }
+
+        const loreBooks = [
+          ...(engineState.chat?.localLore ?? []),
+          ...(char.globalLore ?? []),
+          ...(getModuleLorebooks() || []),
+        ];
+        const found = loreBooks.filter((b) => b.comment === search);
+
+        return JSON.stringify(found.map((b) => ({ ...b, content: risuChatParser(b.content, { chara: char }) })));
+      });
+
+      declareAPI('upsertLocalLoreBook', (
+        id: string,
+        name: string,
+        content: string,
+        options: {
+          alwaysActive?: boolean;
+          insertOrder?: number;
+          key?: string;
+          secondKey?: string;
+          regex?: boolean;
+        } = {}
+      ) => {
+        if (!scriptingSafeIds.has(id)) {
+          return;
+        }
+
+        if (!char || char.type !== 'character') {
+          return;
+        }
+
+        const {
+          alwaysActive = false,
+          insertOrder = 100,
+          key = '',
+          regex = false,
+          secondKey = '',
+        } = options;
+
+        if (!engineState.chat) {
+          return;
+        }
+
+        const newLocalLoreBooks = (engineState.chat.localLore || []).filter((book) => book.comment !== name);
+        newLocalLoreBooks.push({
+          alwaysActive,
+          comment: name,
+          content: content,
+          insertorder: insertOrder,
+          mode: 'normal',
+          key,
+          secondkey: secondKey,
+          selective: !!secondKey,
+          useRegex: regex,
+        });
+        engineState.chat.localLore = newLocalLoreBooks;
+        // TODO: 데이터베이스에 저장
+      });
+
+      declareAPI('loadLoreBooksMain', async (id: string, reserve: number) => {
+        if (!scriptingLowLevelIds.has(id)) {
+          return JSON.stringify([]);
+        }
+        if (!dbData || !char || char.type !== 'character' || !engineState.chat) {
+          return JSON.stringify([]);
+        }
+
+        const lorebookContext: LorebookLoadContext = {
+          character: char,
+          chat: engineState.chat!,
+          database: dbData,
+          tokenizerContext: tokenizerContext!,
+          getChatVar: finalGetVar,
+          setChatVar: finalSetVar,
+          findCharacterbyId: async (id: string) => {
+            // TODO: 캐릭터 찾기 구현
+            return null;
+          },
+        };
+        const fullLoreBooks = (await loadLoreBookV3Prompt(lorebookContext)).actives;
+
+        const maxContext = dbData.maxContext - reserve;
+        if (maxContext < 0) {
+          return JSON.stringify([]);
+        }
+
+        let totalTokens = 0;
+        const loreBooks: any[] = [];
+
+        for (const book of fullLoreBooks) {
+          const parsed = risuChatParser(book.prompt, { chara: char }).trim();
+          if (parsed.length === 0) {
+            continue;
+          }
+
+          if (!tokenizerContext) {
+            continue;
+          }
+          const tokens = await tokenize(parsed, tokenizerContext);
+
+          if (totalTokens + tokens > maxContext) {
+            break;
+          }
+          totalTokens += tokens;
+          loreBooks.push({
+            data: parsed,
+            role: book.role === 'assistant' ? 'char' : book.role,
+          });
+        }
+
+        return JSON.stringify(loreBooks);
+      });
+
+      declareAPI('axLLMMain', async (id: string, promptStr: string, useMultimodal: boolean = false) => {
+        if (!scriptingLowLevelIds.has(id)) {
+          return;
+        }
+        if (!dbData) {
+          throw new Error('Database is required');
+        }
+
+        let prompt: {
+          role: string;
+          content: string;
+        }[] = JSON.parse(promptStr);
+
+        let promptbody: OpenAIChat[] = prompt.map((dict) => {
+          let role: 'system' | 'user' | 'assistant' = 'assistant';
+          switch (dict['role']) {
+            case 'system':
+            case 'sys':
+              role = 'system';
+              break;
+            case 'user':
+              role = 'user';
+              break;
+            case 'assistant':
+            case 'bot':
+            case 'char': {
+              role = 'assistant';
+              break;
+            }
+          }
+
+          return {
+            content: dict['content'] ?? '',
+            role: role,
+          };
+        });
+
+        if (useMultimodal) {
+          for (const msg of promptbody) {
+            const inlays: string[] = [];
+            msg.content = msg.content.replace(/{{(inlay|inlayed|inlayeddata)::(.+?)}}/g, (
+              match: string,
+              p1: string,
+              p2: string
+            ) => {
+              if (msg.role === 'assistant') {
+                if (p2 && p1 === 'inlayeddata') {
+                  inlays.push(p2);
+                }
+              } else {
+                if (p2) {
+                  inlays.push(p2);
+                }
+              }
+              return '';
+            });
+            
+            const multimodals: any[] = [];
+            for (const inlay of inlays) {
+              const inlayData = await getInlayAsset(inlay);
+              multimodals.push({
+                type: inlayData?.type,
+                base64: inlayData?.data,
+                width: inlayData?.width,
+                height: inlayData?.height,
+              });
+            }
+
+            msg.multimodals = multimodals.length > 0 ? multimodals : undefined;
+          }
+        }
+
+        const result = await requestChatData(
+          {
+            formated: promptbody,
+            bias: {},
+            useStreaming: false,
+            noMultiGen: true,
+          },
+          'otherAx',
+          dbData,
+          null
+        );
+
+        if (result.type === 'fail') {
+          return JSON.stringify({
+            success: false,
+            result: 'Error: ' + result.result,
+          });
+        }
+
+        if (result.type === 'streaming' || result.type === 'multiline') {
+          return JSON.stringify({
+            success: false,
+            result: result.result,
+          });
+        }
+
+        return JSON.stringify({
+          success: true,
+          result: result.result,
+        });
+      });
+
       declareAPI('getCharacterLastMessage', (id: string) => {
         const chat = engineState.chat;
         if (!chat) {
-          return '';
+          return char?.firstMessage || '';
         }
 
         let pointer = chat.message.length - 1;
@@ -772,7 +1332,9 @@ export async function runLuaEditTrigger<T extends string | OpenAIChat[]>(
   char: character,
   mode: string,
   content: T,
-  meta?: object
+  meta?: object,
+  database?: Database,
+  tokenizerContext?: TokenizerContext
 ): Promise<T> {
   switch (mode) {
     case 'editinput':
@@ -791,12 +1353,12 @@ export async function runLuaEditTrigger<T extends string | OpenAIChat[]>(
   try {
     let data = content;
 
-    // 트리거 스크립트 가져오기 (서버에서는 character의 triggerScript만 사용)
+    // 트리거 스크립트 가져오기
     const triggers = (char.triggerscript || []).filter((t) => t.effect?.[0]?.type === 'triggerlua');
 
     for (const trigger of triggers) {
       if (trigger?.effect?.[0]?.type === 'triggerlua') {
-        const runResult = await runServerScript(trigger.effect[0].code, {
+        const runResult = await runScripted(trigger.effect[0].code, {
           userId,
           characterId,
           chatId,
@@ -805,6 +1367,8 @@ export async function runLuaEditTrigger<T extends string | OpenAIChat[]>(
           mode: mode,
           data,
           meta,
+          database,
+          tokenizerContext,
         });
         data = (runResult.res ?? data) as T;
       }
@@ -825,7 +1389,9 @@ export async function runLuaButtonTrigger(
   characterId: string,
   chatId: string,
   char: character,
-  data: string
+  data: string,
+  database?: Database,
+  tokenizerContext?: TokenizerContext
 ): Promise<any> {
   let runResult;
   try {
@@ -833,7 +1399,7 @@ export async function runLuaButtonTrigger(
 
     for (const trigger of triggers) {
       if (trigger?.effect?.[0]?.type === 'triggerlua') {
-        runResult = await runServerScript(trigger.effect[0].code, {
+        runResult = await runScripted(trigger.effect[0].code, {
           userId,
           characterId,
           chatId,
@@ -841,6 +1407,8 @@ export async function runLuaButtonTrigger(
           lowLevelAccess: trigger.lowLevelAccess || false,
           mode: 'onButtonClick',
           data: data,
+          database,
+          tokenizerContext,
         });
       }
     }

@@ -38,3 +38,6 @@ export * from './cbs-parser';
 
 // Markdown 렌더링
 export * from './markdown';
+
+// ChatML 파싱
+export { parseChatML } from './chat-ml';

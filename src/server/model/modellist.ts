@@ -1,4 +1,4 @@
-import type { Parameter } from "../../ts/process/request/request"
+import type { Parameter } from "./types"
 // TODO: 서버 사이드에서는 getDatabase가 userId를 필요로 하므로, 
 // 이 함수는 서버 사이드용으로 재구현이 필요합니다.
 // import { getDatabase } from "../database"
@@ -544,17 +544,10 @@ for(let i=0; i<LLMModels.length; i++){
 }
 
 export function getModelInfo(id: string, userId?: string): LLMModel{
-    // TODO: 서버 사이드에서는 userId를 필수로 받아야 합니다.
-    // const db = userId ? await getDatabase(userId) : null
-    // 임시로 빈 객체 사용 (서버 사이드 재구현 필요)
-    const db: any = {}
+    // 기본 모델 리스트에서 찾기
     const found:LLMModel = safeStructuredClone(LLMModels.find(model => model.id === id))
 
     if(found){
-        if(db.enableCustomFlags){
-            found.flags = db.customFlags
-        }
-
         return found
     }
 

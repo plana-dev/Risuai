@@ -218,6 +218,23 @@ export class RedisService {
   }
 
   /**
+   * Inlay 에셋 저장 (TTL: 24시간)
+   */
+  async setInlayAsset(userId: string, assetId: string, asset: any): Promise<void> {
+    const key = `inlay:${userId}:${assetId}`;
+    await this.client!.setex(key, 86400, JSON.stringify(asset));
+  }
+
+  /**
+   * Inlay 에셋 조회
+   */
+  async getInlayAsset(userId: string, assetId: string): Promise<any | null> {
+    const key = `inlay:${userId}:${assetId}`;
+    const data = await this.client!.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+
+  /**
    * 클라이언트 인스턴스 반환 (내부 사용)
    */
   getClient(): Redis | null {

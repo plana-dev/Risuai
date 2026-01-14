@@ -4,7 +4,7 @@
 
 import type { character, groupChat, loreBook, loreSettings } from '../database';
 import type { CharacterBook, charBookEntry } from './types';
-import { checkNullish } from '../../ts/util';
+import { checkNullish } from '../util';
 import { defaultSdDataFunc } from '../database';
 
 export interface ConvertCharbookArg {

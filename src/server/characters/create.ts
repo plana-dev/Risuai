@@ -5,7 +5,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { character } from '../database';
 import { defaultSdDataFunc } from '../database';
-import { checkNullish } from '../../ts/util';
+import { checkNullish } from '../util';
 import { updateLorebooks } from './utils';
 
 /**

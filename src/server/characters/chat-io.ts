@@ -6,7 +6,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import type { Chat } from '../database';
-import { checkNullish } from '../../ts/util';
+import { checkNullish } from '../util';
 
 /**
  * 채팅을 JSON 형식으로 익스포트합니다.
