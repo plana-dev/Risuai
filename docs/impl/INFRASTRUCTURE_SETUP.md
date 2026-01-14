@@ -525,9 +525,9 @@ npx prisma migrate deploy
 - [ ] Worker 프로세스 설정
 
 ### Phase 3: Lua Engine 통합
-- [ ] wasmoon 서버 통합
-- [ ] Lua API 함수 등록
-- [ ] 트리거 스크립트 실행 로직
+- [x] wasmoon 서버 통합
+- [x] Lua API 함수 등록
+- [x] 트리거 스크립트 실행 로직
 
 ### Phase 4: 테스트
 - [ ] 단위 테스트

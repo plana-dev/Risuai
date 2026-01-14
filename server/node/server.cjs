@@ -5,6 +5,10 @@ const htmlparser = require('node-html-parser');
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('fs');
 const fs = require('fs/promises')
 const crypto = require('crypto')
+require('dotenv').config();
+
+// 서비스 초기화
+const { getServiceManager } = require('./services/index');
 app.use(express.static(path.join(process.cwd(), 'dist'), {index: false}));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.raw({ type: 'application/octet-stream', limit: '100mb' }));
@@ -656,5 +660,28 @@ async function startServer() {
 }
 
 (async () => {
-    await startServer();
+    try {
+        // 서비스 초기화
+        const serviceManager = getServiceManager();
+        await serviceManager.initialize();
+
+        // 서버 시작
+        await startServer();
+
+        // Graceful shutdown
+        process.on('SIGTERM', async () => {
+            console.log('[Server] SIGTERM received, shutting down gracefully...');
+            await serviceManager.shutdown();
+            process.exit(0);
+        });
+
+        process.on('SIGINT', async () => {
+            console.log('[Server] SIGINT received, shutting down gracefully...');
+            await serviceManager.shutdown();
+            process.exit(0);
+        });
+    } catch (error) {
+        console.error('[Server] Failed to start:', error);
+        process.exit(1);
+    }
 })();
