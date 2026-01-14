@@ -77,3 +77,71 @@ export interface MemoryContext {
     char: character | groupChat;
     tokenizer: ChatTokenizer;
 }
+
+/**
+ * HypaV3 Preset 및 Settings
+ */
+export interface HypaV3Preset {
+    name: string;
+    settings: HypaV3Settings;
+}
+
+export interface HypaV3Settings {
+    summarizationModel: string;
+    summarizationPrompt: string;
+    reSummarizationPrompt: string;
+    memoryTokensRatio: number;
+    extraSummarizationRatio: number;
+    maxChatsPerSummary: number;
+    recentMemoryRatio: number;
+    similarMemoryRatio: number;
+    enableSimilarityCorrection: boolean;
+    preserveOrphanedMemory: boolean;
+    processRegexScript: boolean;
+    doNotSummarizeUserMessage: boolean;
+    // Experimental
+    useExperimentalImpl: boolean;
+    summarizationRequestsPerMinute: number;
+    summarizationMaxConcurrent: number;
+    embeddingRequestsPerMinute: number;
+    embeddingMaxConcurrent: number;
+    alwaysToggleOn: boolean;
+}
+
+/**
+ * HypaV3 Data 타입
+ */
+export interface HypaV3Data {
+    summaries: HypaV3Summary[];
+    categories?: { id: string; name: string }[];
+    lastSelectedSummaries?: number[];
+    metrics?: {
+        lastImportantSummaries: number[];
+        lastRecentSummaries: number[];
+        lastSimilarSummaries: number[];
+        lastRandomSummaries: number[];
+    };
+}
+
+export interface HypaV3Summary {
+    text: string;
+    chatMemos: Set<string>;
+    isImportant: boolean;
+    categoryId?: string;
+    tags?: string[];
+}
+
+export interface SerializableHypaV3Summary extends Omit<HypaV3Summary, 'chatMemos'> {
+    chatMemos: string[];
+}
+
+export interface SerializableHypaV3Data extends Omit<HypaV3Data, 'summaries'> {
+    summaries: SerializableHypaV3Summary[];
+}
+
+export interface HypaV3Result {
+    currentTokens: number;
+    chats: OpenAIChat[];
+    error?: string;
+    memory?: SerializableHypaV3Data;
+}

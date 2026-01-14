@@ -13,7 +13,8 @@ import type { RequestDataArgumentExtended, RequestDataResponse } from './types';
  */
 export async function requestClaude(
     arg: RequestDataArgumentExtended,
-    database: Database
+    database: Database,
+    userId: string
 ): Promise<RequestDataResponse> {
     // TODO: 전체 구현 필요
     // 원본 파일이 매우 크므로 (982 lines) 단계적으로 구현 필요

@@ -291,7 +291,8 @@ export async function supaMemory(
                     },
                     'memory',
                     database,
-                    null
+                    null,
+                    userId
                 );
                 if (da.type === 'fail' || da.type === 'streaming' || da.type === 'multiline') {
                     return {

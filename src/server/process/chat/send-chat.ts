@@ -24,8 +24,8 @@ import { processScript, processScriptFull } from '../auxiliary/scripts';
 import { runLuaEditTrigger } from '../scripting';
 import { supaMemory } from '../memory/supa-memory';
 import { hanuraiMemory } from '../memory/hanurai-memory';
-import { hypaMemoryV2 } from '../../../ts/process/memory/hypav2';
-import { hypaMemoryV3 } from '../../../ts/process/memory/hypav3';
+import { hypaMemoryV2 } from '../memory/hypa-v2';
+import { hypaMemoryV3 } from '../memory/hypa-v3';
 // Util functions are now available via ProcessContext
 // import { getPersonaPrompt, getUserName, getAuthorNoteDefaultText, findCharacterbyId, parseToggleSyntax, prebuiltAssetCommand } from '../../util';
 import { parseToggleSyntax, prebuiltAssetCommand } from '../../util';

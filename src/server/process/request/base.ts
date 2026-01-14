@@ -64,7 +64,8 @@ export async function requestChatDataMain(
     arg: RequestDataArgument,
     model: ModelModeExtended,
     database: Database,
-    abortSignal: AbortSignal | null = null
+    abortSignal: AbortSignal | null = null,
+    userId: string
 ): Promise<RequestDataResponse> {
     const targ: RequestDataArgumentExtended = {
         ...arg,
@@ -101,7 +102,7 @@ export async function requestChatDataMain(
     if (database.seperateModelsForAxModels && !arg.staticModel) {
         if (database.seperateModels[model]) {
             targ.aiModel = database.seperateModels[model];
-            targ.modelInfo = getModelInfo(targ.aiModel);
+            targ.modelInfo = await getModelInfo(targ.aiModel, userId);
         }
     }
 
@@ -113,14 +114,14 @@ export async function requestChatDataMain(
     switch (format) {
         case LLMFormat.OpenAICompatible:
         case LLMFormat.Mistral:
-            return requestOpenAI(targ, database);
+            return requestOpenAI(targ, database, userId);
         case LLMFormat.Anthropic:
         case LLMFormat.AnthropicLegacy:
         case LLMFormat.AWSBedrockClaude:
-            return requestClaude(targ, database);
+            return requestClaude(targ, database, userId);
         case LLMFormat.VertexAIGemini:
         case LLMFormat.GoogleCloud:
-            return requestGoogleCloudVertex(targ, database);
+            return requestGoogleCloudVertex(targ, database, userId);
         // TODO: 다른 형식들 추가
         default:
             return {
@@ -138,6 +139,7 @@ export async function requestChatData(
     model: ModelModeExtended,
     database: Database,
     abortSignal: AbortSignal | null = null,
+    userId: string,
     options?: {
         getTools?: () => Promise<any[]>;
         runTrigger?: (char: any, type: string, data: any) => Promise<any>;

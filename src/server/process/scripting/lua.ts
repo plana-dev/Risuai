@@ -850,7 +850,8 @@ export async function runScripted(
           },
           'model',
           dbData,
-          null
+          null,
+          userId
         );
 
         if (result.type === 'fail') {
@@ -893,7 +894,8 @@ export async function runScripted(
           },
           'model',
           dbData,
-          null
+          null,
+          userId
         );
 
         if (result.type === 'fail') {
@@ -1211,7 +1213,8 @@ export async function runScripted(
           },
           'otherAx',
           dbData,
-          null
+          null,
+          userId
         );
 
         if (result.type === 'fail') {
