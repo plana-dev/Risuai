@@ -3,7 +3,7 @@
  * char, user, trigger_id, previouscharchat, previoususerchat
  */
 
-import type { CBSRegisterArg, matcherArg } from './types';
+import type { CBSRegisterArg } from './types';
 
 export function registerBasicFunctions(arg: CBSRegisterArg) {
     const { registerFunction, getDatabase, getUserName, getSelectedCharID } = arg;

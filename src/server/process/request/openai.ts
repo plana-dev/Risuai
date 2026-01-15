@@ -191,7 +191,7 @@ export async function requestOpenAI(
     }
 
     if (aiModel === 'openrouter' && database.openrouterRequestModel === 'risu/free') {
-        openrouterRequestModel = await getFreeOpenRouterModel();
+        openrouterRequestModel = await getFreeOpenRouterModel(userId);
     }
 
     // Developer role 처리

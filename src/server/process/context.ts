@@ -66,7 +66,7 @@ export async function createProcessContext(
         customTokenizer: database.customTokenizer,
         currentPluginProvider: database.currentPluginProvider,
         googleClaudeTokenizing: database.googleClaudeTokenizing,
-        pluginTokenizer: undefined, // TODO: 플러그인 토크나이저 가져오기
+        // pluginTokenizer 제거됨 - 플러그인 시스템은 서버에서 사용하지 않음
         useTokenizerCaching: database.useTokenizerCaching,
     };
 

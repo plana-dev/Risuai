@@ -41,8 +41,10 @@ export type HypaModel =
  * 메모리 벡터
  */
 export interface MemoryVector {
-    text: string;
+    text?: string; // 하위 호환성을 위해 optional
+    content?: string; // 서버 사이드에서 사용
     vector: number[];
+    alreadySaved?: boolean; // Redis에서 로드된 경우
 }
 
 /**

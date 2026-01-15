@@ -5,13 +5,17 @@
 
 import type { Database } from '../../database';
 import type { RequestDataArgument, RequestDataArgumentExtended, RequestDataResponse, ModelModeExtended } from './types';
-import type { LLMModel, LLMFormat, LLMFlags } from '../../model/types';
+import type { LLMModel } from '../../model/types';
+import { LLMFlags } from '../../model/types';
+import { LLMFormat } from '../../model/types';
 import { getModelInfo } from '../../model/modellist-server';
 import { sleep } from '../../util';
 import { requestOpenAI } from './openai';
 import { requestClaude } from './anthropic';
 import { requestGoogleCloudVertex } from './google';
-// TODO: 다른 모델 구현체들 import
+import { requestOoba, requestOobaLegacy } from './ooba';
+import { requestLocal } from './local';
+// TODO: 다른 모델 구현체들 import (NovelAI, Kobold, Ollama, Horde 등)
 
 /**
  * 메시지 포맷터
@@ -47,7 +51,58 @@ export function reformater(
         }
     }
 
-    // TODO: LLMFlags 체크 로직 추가
+    // LLMFlags 체크 로직
+    if (flags.includes(LLMFlags.requiresAlternateRole)) {
+        // requiresAlternateRole: 같은 역할의 연속된 메시지를 병합
+        let newFormated: any[] = [];
+        for (let i = 0; i < formated.length; i++) {
+            const m = formated[i];
+            if (newFormated.length === 0) {
+                newFormated.push(m);
+                continue;
+            }
+
+            if (newFormated[newFormated.length - 1].role === m.role) {
+                // 같은 역할이면 내용 병합
+                newFormated[newFormated.length - 1].content += '\n' + m.content;
+                
+                if (m.multimodals) {
+                    if (!newFormated[newFormated.length - 1].multimodals) {
+                        newFormated[newFormated.length - 1].multimodals = [];
+                    }
+                    newFormated[newFormated.length - 1].multimodals.push(...m.multimodals);
+                }
+
+                if (m.thoughts) {
+                    if (!newFormated[newFormated.length - 1].thoughts) {
+                        newFormated[newFormated.length - 1].thoughts = [];
+                    }
+                    newFormated[newFormated.length - 1].thoughts.push(...m.thoughts);
+                }
+
+                if (m.cachePoint) {
+                    if (!newFormated[newFormated.length - 1].cachePoint) {
+                        newFormated[newFormated.length - 1].cachePoint = true;
+                    }
+                }
+
+                continue;
+            } else {
+                newFormated.push(m);
+            }
+        }
+        formated = newFormated;
+    }
+
+    if (flags.includes(LLMFlags.mustStartWithUserInput)) {
+        // mustStartWithUserInput: 첫 메시지가 user여야 함
+        if (formated.length === 0 || formated[0].role !== 'user') {
+            formated.unshift({
+                role: 'user',
+                content: ' '
+            });
+        }
+    }
 
     if (systemPrompt) {
         formated.unshift(systemPrompt);
@@ -122,11 +177,22 @@ export async function requestChatDataMain(
         case LLMFormat.VertexAIGemini:
         case LLMFormat.GoogleCloud:
             return requestGoogleCloudVertex(targ, database, userId);
-        // TODO: 다른 형식들 추가
+        case LLMFormat.OobaLegacy:
+            return requestOobaLegacy(targ, database, userId);
+        case LLMFormat.Ooba:
+            return requestOoba(targ, database, userId);
+        // Local 모델은 선택적 (로컬 모델 서버 필요)
+        // case LLMFormat.Local:
+        //     return requestLocal(targ, database, userId);
+        // TODO: 다른 형식들 추가 (NovelAI, Kobold, Ollama, Horde 등)
         default:
+            // Local 모델은 특별 처리 (id가 local_로 시작하는 경우)
+            if (targ.aiModel?.startsWith('local_')) {
+                return requestLocal(targ, database, userId);
+            }
             return {
                 type: 'fail',
-                result: 'Unknown model format',
+                result: `Unknown model format: ${format}`,
             };
     }
 }

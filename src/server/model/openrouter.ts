@@ -1,15 +1,12 @@
-// TODO: 서버 사이드에서는 getDatabase가 userId를 필요로 하므로, 
-// 이 함수는 서버 사이드용으로 재구현이 필요합니다.
-// import { getDatabase } from "../database"
+import { getDatabaseAdapter } from '../database-adapter';
+import type { Database } from '../database';
 
-export async function openRouterModels(userId?: string) {
+export async function openRouterModels(userId: string): Promise<any[]> {
     try {
-        // TODO: 서버 사이드에서는 userId를 필수로 받아야 합니다.
-        // const db = userId ? await getDatabase(userId) : null
-        // 임시로 빈 객체 사용 (서버 사이드 재구현 필요)
-        const db: any = { openrouterKey: '' }
+        const db = getDatabaseAdapter();
+        const database: Database = await db.loadDatabase(userId);
         let headers = {
-            "Authorization": "Bearer " + db.openrouterKey,
+            "Authorization": "Bearer " + (database.openrouterKey || ''),
             "Content-Type": "application/json"
         }
 
@@ -43,11 +40,15 @@ export async function openRouterModels(userId?: string) {
     }
 }
 
-export async function getFreeOpenRouterModel(){
-    const models = await openRouterModels()
-    return models.filter((model: any) => {
-        return model.name.endsWith("Free")
-    }).sort((a: any, b: any) => {
-        return b.context_length - a.context_length
-    })[0].id ?? ''
+export async function getFreeOpenRouterModel(userId: string): Promise<string> {
+    const models = await openRouterModels(userId);
+    const freeModels = models.filter((model: any) => {
+        return model.name.endsWith("Free");
+    });
+    if (freeModels.length === 0) {
+        return '';
+    }
+    return freeModels.sort((a: any, b: any) => {
+        return b.context_length - a.context_length;
+    })[0].id ?? '';
 }

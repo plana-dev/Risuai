@@ -338,7 +338,12 @@ export async function runScripted(
   const parserContexts = {
     parser: {
       getDatabase: () => dbData,
-      getSelectedCharID: () => 0, // TODO: 실제 선택된 캐릭터 ID 가져오기
+      getSelectedCharID: () => {
+        // characterId를 인덱스로 변환
+        if (!char || !dbData.characters) return 0;
+        const index = dbData.characters.findIndex(c => c.chaId === characterId);
+        return index >= 0 ? index : 0;
+      },
       findCharacterbyId: (id: string) => {
         return dbData.characters?.find(c => c.chaId === id && c.type !== 'group') || null;
       },

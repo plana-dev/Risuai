@@ -27,7 +27,7 @@ export function getHash(
     currentPluginProvider: string,
     googleClaudeTokenizing: boolean,
     modelInfo: { tokenizer: any },
-    pluginTokenizer: string
+    pluginTokenizer: string = 'none' // pluginTokenizer 제거됨, 하위 호환성을 위해 파라미터는 유지하되 기본값 사용
 ): string {
     const combined = `${data}::${aiModel}::${customTokenizer}::${currentPluginProvider}::${googleClaudeTokenizing ? '1' : '0'}::${modelInfo.tokenizer}::${pluginTokenizer}`;
     return combined;

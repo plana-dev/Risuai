@@ -61,5 +61,8 @@ export { Prereroll, PreUnreroll, addRerolls } from './reroll';
 // TTS
 export { sayTTS, getElevenTTSVoices, getVOICEVOXVoices, getNovelAIVoices, FixNAITTS, oaiVoices } from './tts';
 
+// Translation
+export { runTranslator, translateVox } from './translation';
+
 // Command
 export { processMultiCommand } from './command';

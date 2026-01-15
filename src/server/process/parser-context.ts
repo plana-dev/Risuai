@@ -112,8 +112,8 @@ export function createParserContexts(context: ProcessContext): {
             return context.database.modules ?? [];
         },
         getModuleLorebooks: () => {
-            // TODO: 모듈 로어북 가져오기
-            return [];
+            const { getModuleLorebooks: getModuleLorebooksUtil } = require('../auxiliary/modules');
+            return getModuleLorebooksUtil(context.database, context.character, context.chat);
         },
         pickHashRand: (seed: number, hash: string) => {
             // 간단한 해시 기반 랜덤

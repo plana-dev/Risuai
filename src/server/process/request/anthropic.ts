@@ -5,9 +5,8 @@
 
 import type { Database } from '../../database';
 import type { RequestDataArgumentExtended, RequestDataResponse, StreamResponseChunk } from './types';
-import type { OpenAIChat } from '../types';
-import { applyParameters, setObjectValue } from './utils';
-import { getModelInfo, LLMFormat, LLMFlags } from '../../model/modellist';
+import { applyParameters } from './utils';
+import { getModelInfo, LLMFormat } from '../../model/modellist';
 import { simplifySchema } from '../../util';
 import { extractJSON } from '../prompt/templates';
 import { v4 as uuidv4 } from 'uuid';

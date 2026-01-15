@@ -8,7 +8,8 @@
  */
 
 import type { character, Database } from '../../database';
-// TODO: runTranslator, runVITS 서버 사이드 구현 필요
+import { runTranslator, translateVox } from './translation';
+// TODO: runVITS 서버 사이드 구현 필요 (transformers 모듈)
 
 /**
  * TTS 처리
@@ -72,8 +73,8 @@ export async function sayTTS(
                 }
             }
             case 'VOICEVOX': {
-                // TODO: runTranslator 서버 사이드 구현 필요
-                const jpText = text; // 임시로 원본 텍스트 사용
+                // 일본어로 번역 (VOICEVOX는 일본어만 지원)
+                const jpText = await translateVox(text, database, userId || '');
                 const queryResponse = await fetch(
                     `${database.voicevoxUrl}/audio_query?text=${encodeURIComponent(jpText)}&speaker=${character.ttsSpeech}`,
                     {
@@ -168,11 +169,11 @@ export async function sayTTS(
                 }
             }
             case 'huggingface': {
-                // TODO: runTranslator 서버 사이드 구현 필요
+                // 언어 번역 (필요한 경우)
                 let translatedText = text;
-                // if (character.hfTTS?.language !== 'en') {
-                //     translatedText = await runTranslator(text, false, 'en', character.hfTTS?.language || 'en', database);
-                // }
+                if (character.hfTTS?.language && character.hfTTS.language !== 'en' && userId) {
+                    translatedText = await runTranslator(text, false, 'en', character.hfTTS.language, database, userId);
+                }
 
                 const response = await fetch(`https://api-inference.huggingface.co/models/${character.hfTTS?.model}`, {
                     method: 'POST',

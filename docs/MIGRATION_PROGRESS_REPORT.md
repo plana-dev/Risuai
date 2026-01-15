@@ -3,7 +3,9 @@
 **작성일**: 2026년 1월  
 **기준**: `src/ts` → `src/server` 마이그레이션 진행 상황
 
-> 📌 **관련 문서**: [누락된 기능 목록](./MISSING_FEATURES.md) - 원본 소스에 있지만 서버화 소스에 없는 기능들
+> 📌 **관련 문서**: 
+> - [누락된 기능 목록](./MISSING_FEATURES.md) - 원본 소스에 있지만 서버화 소스에 없는 기능들
+> - [서버-클라이언트 기능 분리 원칙](./SERVER_CLIENT_SEPARATION.md) - 서버와 클라이언트 간 기능 분리 가이드라인
 
 ---
 
@@ -13,24 +15,43 @@
 
 | 모듈 | 진행률 | 상태 | 비고 |
 |------|--------|------|------|
-| **Util 함수** | 90% | ✅ 거의 완료 | 일부 함수 남음 |
+| **Util 함수** | 100% | ✅ 완료 | 서버에서 필요한 유틸은 완료(나머지는 클라이언트 전용) |
 | **Parser** | 85% | ✅ 거의 완료 | CBS 파서 완료, 일부 타입 의존성 남음 |
 | **Tokenizer** | 95% | ✅ 거의 완료 | 대부분 완료 |
 | **CBS 시스템** | 100% | ✅ 완료 | 완전히 분리됨 |
 | **Database** | 100% | ✅ 완료 | 타입 및 어댑터 완료 |
 | **Process/Request** | 80% | 🟡 진행 중 | 기본 구조 완료, 세부 구현 필요 |
 | **Process/Chat** | 85% | 🟡 진행 중 | 프롬프트 처리, 스트리밍, 후처리, 그룹 채팅 완료, 세부 최적화 진행 중 |
-| **Process/Memory** | 70% | 🟡 진행 중 | SupaMemory, HanuraiMemory 완료, HypaMemory V2/V3 완료 |
+| **Process/Memory** | 70% | 🟡 진행 중 | HypaMemory V2/V3, HanuraiMemory 완료. SupaMemory는 기본 구조만(실구현 필요) |
 | **Process/Trigger** | 50% | 🟡 진행 중 | 기본 구조 완료, V2 이펙트 일부만 |
 | **Process/Scripting** | 60% | 🟡 진행 중 | Lua 엔진 완료, 일부 API 미구현 |
 | **Process/Auxiliary** | 70% | 🟡 진행 중 | 대부분의 핵심 기능 완료, runImageEmbedding 및 일부 고급 기능 남음 |
 | **Model** | 70% | 🟡 진행 중 | 기본 구조 완료, 일부 provider 미완성 |
 | **Character** | 90% | ✅ 거의 완료 | 대부분 완료 |
-| **Persona** | 80% | ✅ 거의 완료 | 일부 타입 의존성 남음 |
+| **Persona** | 100% | ✅ 완료 | 서버 기능 구현 완료(타입 의존성은 별도 관리) |
 
 **전체 진행률**: 약 **83%** 완료
 
 ---
+
+## 🔍 100% 미완료 모듈 점검 (누락 사유 / 서버 필요 여부)
+
+> 결론부터 정리하면, “미완료”는 크게 (1) **서버에서 반드시 필요한 미구현**, (2) **클라이언트 전용이어서 의도적으로 제외**, (3) **서버에서 별도 시스템으로 처리** 3가지로 나뉩니다.  
+> 클라이언트 전용/별도 시스템은 `docs/MISSING_FEATURES.md`의 스코프 결정을 따릅니다.  
+> 서버-클라이언트 기능 분리 원칙은 `docs/SERVER_CLIENT_SEPARATION.md`를 참고하세요.
+
+| 모듈 | 현재 누락(요약) | 누락 사유 | 서버 모듈 필요? |
+|------|----------------|----------|----------------|
+| **Parser (85%)** | 일부 타입 의존성 정리 | 공통 타입 분리 미완 | 선택(빌드 독립성↑) |
+| **Tokenizer (95%)** | 일부 TODO (authKey 처리, inlay 지원 체크 등) | 기능 미구현 | 선택(기능 완성도 향상) |
+| **Process/Request (80%)** | Tool calls, 멀티모달, 재시도/에러, 스트리밍 완성 | 기능 미구현(TODO 다수) | 필수(프로덕션 품질) |
+| **Process/Chat (85%)** | 멀티모달 변환, 이미지 임베딩은 클라이언트 처리로 위임. Emotion, TTS, 이미지 생성은 클라이언트 전용 | 서버-클라이언트 분리 원칙 적용 | 필수(기능 목표에 따라) |
+| **Process/Memory (70%)** | SupaMemory 실구현/검증, 벡터DB/임베딩, transformers 의존 제거 | 일부 파일에 “TODO: 전체 구현 필요” 표기 및 외부 의존 | 선택~필수(메모리 기능 목표에 따라) |
+| **Process/Trigger (50%)** | V2 이펙트 다수, 저장/결과 반영 | 미구현(TODO 다수) | 선택(트리거 사용 시 필수) |
+| **Process/Scripting (60%)** | LLMMain/simpleLLM, 누락 API 일부 | 서버 LLM 호출/DB 접근 설계 미완 | 선택(스크립팅 사용 시 필수) |
+| **Process/Auxiliary (70%)** | 이미지 임베딩은 클라이언트 처리로 위임. TTS, 이미지 생성, 이모션은 클라이언트 전용 | 서버-클라이언트 분리 원칙 적용 | 선택(해당 기능 사용 시) |
+| **Model (70%)** | OpenRouter/Ooba/Local 서버 구현 | provider 별 미구현 | 선택(지원 범위에 따라) |
+| **Character (90%)** | 일부 타입 정리/서버 전용 익스포트 범위 | 타입/기능 경계 정리 | 선택 |
 
 ## ✅ 완료된 작업
 
@@ -81,7 +102,8 @@
 - ✅ 캐싱 시스템 완료
 
 **남은 작업:**
-- ⏳ `tokenizeGGUFModel` → 아직 `src/ts/process/models/local`에서 import
+- ⏳ 일부 TODO 처리 (authKey 처리, inlay 지원 체크 등)
+- ⏳ 플러그인 토크나이저는 서버에서 지원하지 않음 (클라이언트 전용)
 
 ### 4. CBS 시스템 (100%)
 
@@ -119,13 +141,14 @@
 ### 7. Process/Memory 모듈 (70%)
 
 **완료된 항목:**
-- ✅ `supaMemory` → `src/server/process/memory/supa-memory.ts`
+- 🟡 `supaMemory` → `src/server/process/memory/supa-memory.ts` (기본 구조 이관, **전체 구현 필요** 표기됨)
 - ✅ `hanuraiMemory` → `src/server/process/memory/hanurai-memory.ts`
 - ✅ `hypaMemoryV2` → `src/server/process/memory/hypa-v2.ts`
 - ✅ `hypaMemoryV3` → `src/server/process/memory/hypa-v3.ts`
 - ✅ HypaProcessor 구현 완료
 
 **남은 작업:**
+- ⏳ SupaMemory 서버 실구현/검증(현재 파일 상단에 “TODO: 전체 구현 필요” 명시)
 - ⏳ 벡터 DB 통합 (Redis 또는 전용 벡터 DB)
 - ⏳ 임베딩 생성 서버 사이드 마이그레이션
 
@@ -185,7 +208,9 @@
 
 **남은 작업:**
 - ⏳ 스트리밍 처리 세부 최적화
-- ⏳ Emotion 처리 완전 구현
+- ⏳ Emotion 처리: 클라이언트 전용 (서버에서 제외)
+- ⏳ 멀티모달 변환: 클라이언트에서 처리 (서버는 받은 데이터만 전달)
+- ⏳ 이미지 임베딩: 클라이언트에서 처리 (선택적, 서버에서 제외)
 - ⏳ WebSocket 스트리밍 엔드포인트 (P1)
 
 **예상 작업량**: 1일 (세부 최적화 및 WebSocket)
@@ -234,9 +259,10 @@
 - ✅ 문자열화 처리 완료 (`stringlize.ts`)
 
 **남은 작업:**
-- ⏳ `runImageEmbedding` 서버 사이드 마이그레이션 (`image-embedding.ts`, transformers 모듈 필요)
-- ⏳ VITS TTS 완전 구현
-- ⏳ 이미지 생성 완전 구현 (ComfyUI 통합 세부 구현)
+- ⏳ `runImageEmbedding`: 클라이언트 처리로 위임 (서버에서 제외)
+- ⏳ TTS: 클라이언트 전용 (서버는 오디오 데이터 생성만, 재생은 클라이언트)
+- ⏳ 이미지 생성: 클라이언트 전용 (Stable Diffusion 등, UI 연출용)
+- ⏳ 이모션 출력: 클라이언트 전용 (UI 상태 업데이트)
 
 **예상 작업량**: 2-3일
 
@@ -266,7 +292,7 @@
    - 스트리밍 처리
    - 후처리 로직
 
-2. **클라이언트 사이드 의존성 완전 제거** ✅ 완료
+2. **클라이언트 사이드 의존성 제거** 🟡 대부분 완료
    - ✅ `parseKeyValue` 마이그레이션 완료
    - ✅ `calcString` 마이그레이션 완료
    - ✅ `getMatcherMap`, `initMatcher` 마이그레이션 완료
@@ -275,7 +301,7 @@
    - ✅ `processMultiCommand` 마이그레이션 완료
    - ✅ `generateAIImage` 마이그레이션 완료
    - ✅ `tokenizeGGUFModel` 마이그레이션 완료
-   - ⏳ `runImageEmbedding` 마이그레이션 (transformers 모듈, P1)
+   - ❗ 런타임 의존성 2건 잔존(아래 “클라이언트 사이드 의존성 현황” 참고)
 
 3. **API 엔드포인트 구현** ✅ 기본 완료
    - ✅ POST `/api/chat/send` - 채팅 전송 (구현 완료)
@@ -322,21 +348,40 @@
 - `src/server/database/types.ts`:
   - `triggerscript`, `OnnxModelFiles`, `RisuModule`, `SerializableHypaV2Data`, `SerializableHypaV3Data`
   - `LLMFlags`, `LLMFormat`, `LLMTokenizer`, `HypaModel`, `HypaV3Settings`, `HypaV3Preset`
-  - `RisuPlugin`, `NAISettings`, `ColorScheme`, `PromptItem`, `PromptSettings`
+  - `RisuPlugin` (타입만, 플러그인 시스템은 서버에서 사용하지 않음), `NAISettings`, `ColorScheme`, `PromptItem`, `PromptSettings`
   - `OobaChatCompletionRequestParams`, `OpenAIChat`, `Hotkey`, `Database`
 
-**런타임 의존성 (완료):**
-- ✅ 모든 런타임 의존성 마이그레이션 완료
+**런타임 의존성 (잔존, 정리 필요):**
+- `src/server/process/auxiliary/example-messages.ts`:
+  - `require('../../ts/process/scripts')` (server-side `risuChatParser`로 교체 필요)
+- `src/server/process/auxiliary/image-embedding.ts`:
+  - `import { runImageEmbedding as runImageEmbeddingClient } from '../../../ts/process/transformers'` 
+  - **결정**: 이미지 임베딩은 클라이언트 처리로 위임 (서버에서 제외)
+  - 이 파일은 제거하거나 클라이언트 호출용 래퍼로 변경 필요
 
 **타입 정의만 (런타임 의존성 없음, 우선순위 낮음):**
 - `src/server/database/types.ts`: 
   - `triggerscript`, `SerializableHypaV2Data`, `SerializableHypaV3Data`
   - `HypaModel`, `HypaV3Settings`, `HypaV3Preset`
-  - `RisuPlugin`, `PromptItem`, `PromptSettings`
+  - `RisuPlugin` (타입만, 플러그인 시스템은 서버에서 사용하지 않음), `PromptItem`, `PromptSettings`
   - `OobaChatCompletionRequestParams`, `OpenAIChat`, `Database`
 - `src/server/characters/types.ts`: `OnnxModelFiles` (타입만, 이미 서버에 정의됨)
 
-**총 20개 파일에서 타입 정의만 `src/ts` import (런타임 의존성 없음)**
+**요약**: 타입 의존성은 다수(허용), 런타임 의존성은 2건(정리 필요)
+
+### 플러그인 시스템 관련
+
+**결정**: 서버 모듈에서는 플러그인 시스템을 사용하지 않음
+- 보안 위험 (사용자 코드 실행)
+- 서비스 웹 특성상 클라이언트에서만 필요
+- 서버 코드 단순화
+
+**서버 코드 정리 필요:**
+- `src/server/tokenizer/encode.ts`: `pluginTokenizer` 처리 로직 (플러그인 없이 동작하도록 수정)
+- `src/server/process/context.ts`: `pluginTokenizer` 필드 (제거 또는 주석 처리)
+- `src/server/process/auxiliary/scripts.ts`: 플러그인 처리 TODO (제거)
+- `src/server/process/auxiliary/image-embedding.ts`: 이미지 임베딩 로직 제거 (클라이언트 처리로 위임)
+- `src/server/process/chat/send-chat.ts`: 멀티모달 변환 로직 제거 (클라이언트가 구성한 multimodals만 전달)
 
 ---
 
@@ -350,9 +395,10 @@
    - 트리거 실행 결과 저장 로직 완성
 
 2. **Process/Auxiliary 모듈 완성**
-   - `runImageEmbedding` 서버 사이드 마이그레이션 (transformers 모듈 필요)
-   - VITS TTS 완전 구현
-   - 이미지 생성 완전 구현 (ComfyUI 통합 세부 구현)
+   - 이미지 임베딩: 클라이언트 처리로 위임 (서버에서 제외)
+   - TTS: 클라이언트 전용 (서버는 오디오 데이터 생성만)
+   - 이미지 생성: 클라이언트 전용 (UI 연출용)
+   - 이모션 출력: 클라이언트 전용
 
 3. **Process/Scripting 모듈 완성**
    - `LLMMain`, `simpleLLM` 완전 구현
@@ -362,6 +408,10 @@
    - OpenRouter 서버 사이드 완전 구현
    - Ooba 서버 사이드 구현
    - Local 모델 서버 사이드 구현
+
+5. **템플릿 관련 누락 기능(서버) 구현**
+   - `templateCheck` 서버 구현(프롬프트 템플릿 검증/경고)
+   - 권장 프리셋 로직은 “서버 제공 필요 여부”부터 결정(자세한 스코프는 `docs/MISSING_FEATURES.md` 참고)
 
 ### 중기 작업 (1-2주)
 
@@ -376,7 +426,7 @@
 2. **Process/Request 모듈 완성**
    - 스트리밍 처리 세부 구현
    - Tool calls 완전 구현
-   - Multimodal 처리 완전 구현
+   - Multimodal 처리: 클라이언트가 구성한 multimodals를 그대로 전달 (서버는 변환하지 않음)
    - 에러 처리 및 재시도 로직 강화
 
 ### 장기 작업 (2-4주)
@@ -704,6 +754,40 @@
 5. **파일 네이밍 컨벤션**
    - 원본: `camelCase.ts` (예: `inlayScreen.ts`)
    - 서버: `kebab-case.ts` (예: `inlay-screen.ts`)
+
+---
+
+---
+
+## 🔄 서버-클라이언트 기능 분리
+
+### 분리 원칙 요약
+
+서버와 클라이언트 간 기능 분리는 **상태 변경 권위**와 **표시 연출**을 기준으로 분리됩니다.
+
+**서버 권위 (Authoritative):**
+- 상태 변경 (변수, 인벤토리, 플래그 등)
+- 과금 확정 (토큰 사용량, 크레딧 차감)
+- 스크립트 실행 (editinput, editprocess, editoutput)
+- 트리거 실행 (input, output, request, start)
+- 프롬프트 구성 및 LLM 호출
+- 메모리 처리
+- 영속성 관리
+
+**클라이언트 연출 (View/Actor):**
+- 입력 수집 및 optimistic UI
+- 스트리밍 표시 (visual-only)
+- 연출 처리 (에셋 매크로, 마크다운 렌더링)
+- editdisplay 스크립트 (visual-only)
+- display 트리거 (visual-only)
+- UI 반영 (state_patch, system_events)
+- TTS 처리 (브라우저 API)
+- 이모션 이미지 (UI 상태 업데이트)
+- 이미지 생성 (Stable Diffusion 등, UI 연출용)
+- **멀티모달 변환** (Inlay → multimodals)
+- **이미지 임베딩** (선택적, 사용자가 선택)
+
+**자세한 내용은 [`docs/SERVER_CLIENT_SEPARATION.md`](./SERVER_CLIENT_SEPARATION.md)를 참고하세요.**
 
 ---
 

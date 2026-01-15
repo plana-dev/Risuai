@@ -24,7 +24,7 @@ export async function getModelInfo(
     }
 
     // 기본 모델 리스트에서 찾기
-    const found: LLMModel | undefined = safeStructuredClone(LLMModels.find(model => model.id === id));
+    const found: LLMModel | undefined = JSON.parse(JSON.stringify(LLMModels.find(model => model.id === id))); // safeStructuredClone 대체
 
     if (found) {
         // 데이터베이스에서 custom flags 적용

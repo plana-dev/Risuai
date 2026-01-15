@@ -612,7 +612,7 @@ app.get('/api/oauth_callback', async (req, res) => {
 
 // 채팅 API 라우트
 const chatRoutes = require('./routes/chat');
-app.use('/api/chat', chatRoutes);
+app.use('/api/chat', chatRoutes.router || chatRoutes);
 
 async function getHttpsOptions() {
 
@@ -644,19 +644,28 @@ async function startServer() {
         const port = process.env.PORT || 6001;
         const httpsOptions = await getHttpsOptions();
 
+        let httpServer;
         if (httpsOptions) {
             // HTTPS
-            https.createServer(httpsOptions, app).listen(port, () => {
+            httpServer = https.createServer(httpsOptions, app);
+            httpServer.listen(port, () => {
                 console.log("[Server] HTTPS server is running.");
                 console.log(`[Server] https://localhost:${port}/`);
             });
         } else {
             // HTTP
-            app.listen(port, () => {
+            httpServer = app.listen(port, () => {
                 console.log("[Server] HTTP server is running.");
                 console.log(`[Server] http://localhost:${port}/`);
             });
         }
+
+        // WebSocket 스트리밍 설정
+        if (chatRoutes.setupWebSocketStream) {
+            chatRoutes.setupWebSocketStream(httpServer);
+        }
+
+        return httpServer;
     } catch (error) {
         console.error('[Server] Failed to start server :', error);
         process.exit(1);

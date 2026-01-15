@@ -14,7 +14,7 @@
 
 import type { character, Chat, Database, MessageGenerationInfo, MessagePresetInfo } from '../../database';
 import type { OpenAIChat } from '../types';
-import type { SendChatArg, SendChatResult, UnformatedPrompts, StageTimings } from './types';
+import type { SendChatArg, SendChatResult, UnformatedPrompts, StageTimings, StreamingCallback } from './types';
 import type { ProcessContext } from '../context';
 import type { TokenizerContext } from '../../tokenizer';
 import { v4 as uuidv4 } from 'uuid';
@@ -1469,6 +1469,15 @@ export async function sendChat(
                 currentChatData.message[msgIndex].data = result2.data;
                 emoChanged = result2.emoChanged;
                 
+                // 스트리밍 콜백 호출 (WebSocket 등)
+                if (arg.streamingCallback) {
+                    try {
+                        await arg.streamingCallback(lastResponseChunk);
+                    } catch (error) {
+                        console.error('[Streaming] Callback error:', error);
+                    }
+                }
+                
                 // 스트리밍 중 데이터베이스 업데이트 (최적화를 위해 주기적으로만 저장)
                 if (msgIndex % 5 === 0) { // 5개 메시지마다 저장
                     await updateContextChat(context, (chat) => {
@@ -1529,7 +1538,7 @@ export async function sendChat(
         
         // TTS 처리
         if (database.ttsAutoSpeech) {
-            const ttsResult = await sayTTS(currentChar, result, database);
+            const ttsResult = await sayTTS(currentChar, result, database, context.userId);
             // 서버 사이드에서는 오디오 데이터를 반환만 하고, 실제 재생은 클라이언트에서 처리
             if (ttsResult.audioData) {
                 // TODO: 클라이언트로 오디오 데이터 전송 (WebSocket 또는 응답에 포함)
@@ -1640,7 +1649,7 @@ export async function sendChat(
         
         // TTS 처리
         if (database.ttsAutoSpeech && result) {
-            const ttsResult = await sayTTS(currentChar, result, database);
+            const ttsResult = await sayTTS(currentChar, result, database, context.userId);
             if (ttsResult.audioData) {
                 // TODO: 클라이언트로 오디오 데이터 전송
                 console.log('[TTS] Audio data generated');

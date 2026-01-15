@@ -4,6 +4,8 @@
  */
 
 import type { OpenAIChat, MultiModal, ModelModeExtended } from '../types';
+
+export type { ModelModeExtended };
 import type { character } from '../../database';
 import type { LLMModel } from '../../model/types';
 

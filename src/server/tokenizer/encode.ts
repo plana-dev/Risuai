@@ -87,7 +87,7 @@ export async function encode(
     context: TokenizerContext,
     cache?: { get: (key: string) => TokenizerResult | undefined | Promise<TokenizerResult | undefined>; set: (key: string, value: TokenizerResult) => void | Promise<void> }
 ): Promise<TokenizerResult> {
-    const { database, modelInfo, customTokenizer, currentPluginProvider, googleClaudeTokenizing, pluginTokenizer, useTokenizerCaching } = context;
+    const { database, modelInfo, customTokenizer, currentPluginProvider, googleClaudeTokenizing, useTokenizerCaching } = context;
     const tokenCache = cache || new MemoryTokenizerCache();
 
     let cacheKey = '';
@@ -99,7 +99,7 @@ export async function encode(
             currentPluginProvider || '',
             googleClaudeTokenizing || false,
             modelInfo,
-            pluginTokenizer || 'none'
+            'none' // pluginTokenizer 제거됨
         );
         const cachedResult = await (typeof tokenCache.get === 'function' && tokenCache.get.constructor.name === 'AsyncFunction' 
             ? tokenCache.get(cacheKey) 
@@ -134,35 +134,7 @@ export async function encode(
             default:
                 result = await tikJS(data, 'o200k_base'); break;
         }
-    } else if (database.aiModel === 'custom' && pluginTokenizer) {
-        switch (pluginTokenizer) {
-            case 'mistral':
-                result = await tokenizeWebTokenizers(data, 'mistral'); break;
-            case 'llama':
-                result = await tokenizeWebTokenizers(data, 'llama'); break;
-            case 'novelai':
-                result = await tokenizeWebTokenizers(data, 'novelai'); break;
-            case 'claude':
-                result = await tokenizeWebTokenizers(data, 'claude'); break;
-            case 'novellist':
-                result = await tokenizeWebTokenizers(data, 'novellist'); break;
-            case 'llama3':
-                result = await tokenizeWebTokenizers(data, 'llama'); break;
-            case 'gemma':
-                result = await gemmaTokenize(data); break;
-            case 'cohere':
-                result = await tokenizeWebTokenizers(data, 'cohere'); break;
-            case 'o200k_base':
-                result = await tikJS(data, 'o200k_base'); break;
-            case 'cl100k_base':
-                result = await tikJS(data, 'cl100k_base'); break;
-            case 'custom':
-                // TODO: 플러그인 tokenizer 함수 호출
-                result = [0]; break;
-            default:
-                result = await tikJS(data, 'o200k_base'); break;
-        }
-    }
+    // pluginTokenizer 제거됨 - custom 모델은 customTokenizer 사용
 
     // Fallback
     if (result === undefined) {

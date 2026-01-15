@@ -20,7 +20,7 @@ export interface TokenizerContext {
     customTokenizer?: string;
     currentPluginProvider?: string;
     googleClaudeTokenizing?: boolean;
-    pluginTokenizer?: string;
+    // pluginTokenizer 제거됨 - 플러그인 시스템은 서버에서 사용하지 않음
     useTokenizerCaching?: boolean;
 }
 

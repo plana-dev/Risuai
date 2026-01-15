@@ -28,6 +28,42 @@ import { tokenize } from '../../tokenizer';
 import { calcString } from '../../util/string';
 
 /**
+ * 안전한 이펙트 서브셋 (display/request 모드에서 허용)
+ */
+const safeSubset = [
+    'v2Comment',
+    'v2DeclareLocalVar',
+    'v2GetDisplayState',
+    'v2SetDisplayState',
+    'v2GetRequestState',
+    'v2SetRequestState',
+    'v2GetRequestStateRole',
+    'v2SetRequestStateRole',
+    'v2GetRequestStateLength',
+];
+
+/**
+ * Display 모드에서 허용된 이펙트 목록
+ */
+export const displayAllowList = [
+    'v2GetDisplayState',
+    'v2SetDisplayState',
+    ...safeSubset,
+];
+
+/**
+ * Request 모드에서 허용된 이펙트 목록
+ */
+export const requestAllowList = [
+    'v2GetRequestState',
+    'v2SetRequestState',
+    'v2GetRequestStateRole',
+    'v2SetRequestStateRole',
+    'v2GetRequestStateLength',
+    ...safeSubset,
+];
+
+/**
  * 트리거 실행 인자
  */
 export interface TriggerRunArg {
@@ -240,7 +276,12 @@ export async function runTrigger(
             const effect = trigger.effect[index];
 
             // Display/Request 모드에서는 허용된 이펙트만 실행
-            // TODO: displayAllowList, requestAllowList 체크
+            if (mode === 'display' && !displayAllowList.includes(effect.type)) {
+                continue;
+            }
+            if (mode === 'request' && !requestAllowList.includes(effect.type)) {
+                continue;
+            }
 
             if (effect && 'indent' in effect && typeof effect.indent === 'number' && effect.indent >= 0) {
                 currentIndent = effect.indent;

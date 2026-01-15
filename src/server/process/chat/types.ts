@@ -7,6 +7,11 @@ import type { OpenAIChat, MultiModal } from '../types';
 import type { character, Chat, MessageGenerationInfo, MessagePresetInfo } from '../../database';
 
 /**
+ * 스트리밍 콜백 함수 타입
+ */
+export type StreamingCallback = (chunk: { [key: string]: string }) => void | Promise<void>;
+
+/**
  * sendChat 함수 인자
  */
 export interface SendChatArg {
@@ -16,6 +21,7 @@ export interface SendChatArg {
     usedContinueTokens?: number;
     preview?: boolean;
     previewPrompt?: boolean;
+    streamingCallback?: StreamingCallback; // WebSocket 스트리밍을 위한 콜백
 }
 
 /**

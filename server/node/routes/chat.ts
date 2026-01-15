@@ -131,4 +131,175 @@ router.get('/:chatId', async (req, res) => {
     }
 });
 
-module.exports = router;
+/**
+ * WebSocket 스트리밍 채팅 엔드포인트
+ * 
+ * WebSocket 연결 시:
+ * - 첫 메시지로 다음 JSON을 전송:
+ *   {
+ *     type: 'init',
+ *     userId: string,
+ *     characterId: string,
+ *     chatId: string,
+ *     message?: string, // 사용자 메시지 (선택적)
+ *     options?: {
+ *       chatAdditionalTokens?: number,
+ *       continue?: boolean,
+ *       usedContinueTokens?: number,
+ *       preview?: boolean,
+ *       previewPrompt?: boolean,
+ *     }
+ *   }
+ * 
+ * 서버 응답:
+ * - 스트리밍 청크: { type: 'chunk', data: string, key: string }
+ * - 완료: { type: 'done', result: SendChatResult }
+ * - 에러: { type: 'error', error: string }
+ */
+function setupWebSocketStream(server: any) {
+    // ws 패키지가 설치되어 있는지 확인
+    let WebSocketServer: any;
+    try {
+        WebSocketServer = require('ws').WebSocketServer;
+    } catch (error) {
+        console.warn('[WebSocket] ws package not found. WebSocket streaming will not be available.');
+        console.warn('[WebSocket] Install ws package: npm install ws @types/ws');
+        return;
+    }
+
+    const wss = new WebSocketServer({ 
+        path: '/api/chat/stream',
+        server: server,
+        perMessageDeflate: false, // 압축 비활성화 (스트리밍 성능 향상)
+    });
+
+    wss.on('connection', async (ws: any, req: any) => {
+        console.log('[WebSocket] New connection:', req.socket.remoteAddress);
+        
+        let context: any = null;
+        let abortController: AbortController | null = null;
+
+        ws.on('message', async (message: string) => {
+            try {
+                const data = JSON.parse(message.toString());
+                
+                if (data.type === 'init') {
+                    const { userId, characterId, chatId, message: userMessage, options } = data;
+
+                    if (!userId || !characterId || !chatId) {
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            error: 'Missing required parameters: userId, characterId, chatId',
+                        }));
+                        ws.close();
+                        return;
+                    }
+
+                    // ProcessContext 생성
+                    context = await createProcessContext(userId, characterId, chatId, options);
+
+                    // 사용자 메시지가 제공된 경우 채팅에 추가
+                    if (userMessage) {
+                        const databaseAdapter = getDatabaseAdapter();
+                        const chat = await databaseAdapter.loadChat(userId, chatId);
+                        if (chat) {
+                            chat.message.push({
+                                role: 'user',
+                                data: userMessage,
+                                time: Date.now(),
+                                chatId: uuidv4(),
+                            });
+                            await databaseAdapter.saveChat(userId, chat);
+                            context.chat = chat;
+                        }
+                    }
+
+                    // AbortController 생성
+                    abortController = new AbortController();
+
+                    // 스트리밍 콜백 정의
+                    const streamingCallback = async (chunk: { [key: string]: string }) => {
+                        try {
+                            // WebSocket으로 스트리밍 청크 전송
+                            for (const [key, value] of Object.entries(chunk)) {
+                                ws.send(JSON.stringify({
+                                    type: 'chunk',
+                                    key: key,
+                                    data: value,
+                                }));
+                            }
+                        } catch (error) {
+                            console.error('[WebSocket] Streaming callback error:', error);
+                        }
+                    };
+
+                    // sendChat 호출 (비동기로 처리)
+                    sendChat(context, -1, {
+                        chatAdditonalTokens: options?.chatAdditionalTokens,
+                        continue: options?.continue,
+                        usedContinueTokens: options?.usedContinueTokens,
+                        preview: options?.preview,
+                        previewPrompt: options?.previewPrompt,
+                        signal: abortController.signal,
+                        streamingCallback: streamingCallback,
+                    }).then(async (result) => {
+                        if (!result.success) {
+                            ws.send(JSON.stringify({
+                                type: 'error',
+                                error: result.error || 'Unknown error',
+                            }));
+                            ws.close();
+                            return;
+                        }
+
+                        // 완료 메시지 전송
+                        ws.send(JSON.stringify({
+                            type: 'done',
+                            result: result,
+                        }));
+                        ws.close();
+                    }).catch((error) => {
+                        console.error('[WebSocket] sendChat error:', error);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            error: error instanceof Error ? error.message : 'Unknown error',
+                        }));
+                        ws.close();
+                    });
+                    
+                } else if (data.type === 'abort') {
+                    // 클라이언트가 중단 요청
+                    if (abortController) {
+                        abortController.abort();
+                    }
+                    ws.send(JSON.stringify({
+                        type: 'aborted',
+                    }));
+                    ws.close();
+                }
+            } catch (error) {
+                console.error('[WebSocket] Message handling error:', error);
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                }));
+                ws.close();
+            }
+        });
+
+        ws.on('close', async () => {
+            console.log('[WebSocket] Connection closed');
+            if (abortController) {
+                abortController.abort();
+            }
+        });
+
+        ws.on('error', (error: Error) => {
+            console.error('[WebSocket] Error:', error);
+        });
+    });
+
+    console.log('[WebSocket] WebSocket server initialized at /api/chat/stream');
+}
+
+module.exports = { router, setupWebSocketStream };

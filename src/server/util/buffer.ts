@@ -18,6 +18,15 @@ export function asBuffer(arr: Uint8Array<ArrayBufferLike> | ArrayBufferLike): Ui
 }
 
 /**
+ * Blob을 Uint8Array로 변환
+ * 원본: src/ts/util.ts의 blobToUint8Array
+ */
+export async function blobToUint8Array(data: Blob): Promise<Uint8Array> {
+    const arrayBuffer = await data.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+}
+
+/**
  * 비동기 replace 함수
  */
 export async function replaceAsync(

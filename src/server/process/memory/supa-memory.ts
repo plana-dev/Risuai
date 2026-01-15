@@ -7,15 +7,13 @@
 
 import type { OpenAIChat } from '../types';
 import type { Chat, character, groupChat, Database } from '../../database';
-import type { ChatTokenizer } from '../../tokenizer';
+import type { ChatTokenizer, TokenizerContext } from '../../tokenizer';
 import type { SupaMemoryResult, SupaMemoryArg, HypaData } from './types';
 import { tokenize } from '../../tokenizer';
-import type { TokenizerContext } from '../../tokenizer';
 import { HypaProcessor } from './hypa-processor';
 import { stringlizeChat } from '../auxiliary/stringlize';
 import { parseChatML } from '../../parser';
 import { requestChatData } from '../request';
-import { getUserName } from '../../util/database';
 import { getUserName } from '../../util/database';
 
 /**

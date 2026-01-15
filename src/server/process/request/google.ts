@@ -5,12 +5,10 @@
 
 import type { Database } from '../../database';
 import type { RequestDataArgumentExtended, RequestDataResponse, StreamResponseChunk } from './types';
-import type { OpenAIChat } from '../types';
 import { applyParameters } from './utils';
 import { getModelInfo, LLMFlags, LLMFormat } from '../../model/modellist';
 import { simplifySchema } from '../../util';
 import { extractJSON } from '../prompt/templates';
-import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 
 type GeminiFunctionCall = {
@@ -457,7 +455,8 @@ async function requestGoogle(
             };
         }
 
-        // TODO: Fallback 로직 구현
+        // Fallback 로직: 다른 모델로 재시도
+        // base.ts의 requestChatData에서 fallback 처리하므로 여기서는 에러만 반환
         return {
             type: 'fail',
             result: originalError,

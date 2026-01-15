@@ -127,3 +127,79 @@ export async function findCharacterbyId(
     const character = database.characters.find(c => c.chaId === characterId);
     return character || null;
 }
+
+/**
+ * 캐릭터 ID로 인덱스 찾기
+ * 원본: src/ts/util.ts의 findCharacterIndexbyId
+ */
+export async function findCharacterIndexbyId(
+    userId: string,
+    characterId: string,
+    database?: Database
+): Promise<number> {
+    if (!database) {
+        const db = getDatabaseAdapter();
+        database = await db.loadDatabase(userId);
+    }
+
+    const index = database.characters.findIndex(c => c.chaId === characterId);
+    return index;
+}
+
+/**
+ * 캐릭터 인덱스 객체 생성
+ * 원본: src/ts/util.ts의 getCharacterIndexObject
+ */
+export async function getCharacterIndexObject(
+    userId: string,
+    database?: Database
+): Promise<{ [key: string]: number }> {
+    if (!database) {
+        const db = getDatabaseAdapter();
+        database = await db.loadDatabase(userId);
+    }
+
+    const result: { [key: string]: number } = {};
+    database.characters.forEach((char, index) => {
+        result[char.chaId] = index;
+    });
+    return result;
+}
+
+/**
+ * 사용자 아이콘 포트레이트 가져오기
+ * 원본: src/ts/util.ts의 getUserIconProtrait
+ */
+export async function getUserIconProtrait(
+    userId: string,
+    chatId?: string,
+    database?: Database
+): Promise<string | false> {
+    if (!database) {
+        const db = getDatabaseAdapter();
+        database = await db.loadDatabase(userId);
+    }
+
+    // 바인딩된 페르소나 확인
+    if (chatId) {
+        try {
+            const db = getDatabaseAdapter();
+            const chat = await db.loadChat(userId, chatId);
+            if (chat?.bindedPersona) {
+                const persona = database.personas.find(p => p.id === chat.bindedPersona);
+                if (persona) {
+                    return (persona as any).largePortrait ?? false;
+                }
+            }
+        } catch (error) {
+            // Chat을 찾을 수 없는 경우 무시
+        }
+    }
+
+    // selectedPersona 확인
+    if (database.selectedPersona !== undefined && database.personas[database.selectedPersona]) {
+        return (database.personas[database.selectedPersona] as any).largePortrait ?? false;
+    }
+
+    return false;
+}

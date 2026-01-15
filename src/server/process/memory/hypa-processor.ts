@@ -69,11 +69,61 @@ export class HypaProcessor {
     async getEmbeds(input: string[] | string, database?: Database): Promise<VectorArray[]> {
         const inputs: string[] = Array.isArray(input) ? input : [input];
 
-        // 로컬 모델 사용 (TODO: 서버 사이드 transformers 모듈 마이그레이션 필요)
+        // 로컬 모델 사용 - API 기반으로 처리
         if (Object.keys(localModels.models).includes(this.model)) {
-            // 서버 사이드에서는 로컬 모델을 사용할 수 없으므로 에러 반환
-            // TODO: 서버 사이드 transformers 모듈 마이그레이션 후 구현
-            throw new Error(`Local model ${this.model} is not yet supported in server-side. Please use OpenAI or custom embedding models.`);
+            // 서버 사이드에서는 로컬 모델 서버 API를 호출하거나 subModel을 사용
+            // 로컬 모델 서버가 임베딩 API를 제공하는 경우 사용
+            // 그렇지 않으면 subModel을 사용하여 임베딩 생성 (API 기반)
+            
+            // 방법 1: 로컬 모델 서버 API 호출 (임베딩 엔드포인트가 있는 경우)
+            // 방법 2: subModel을 사용하여 임베딩 생성
+            // 현재는 subModel을 사용하여 임베딩 생성 (API 기반)
+            
+            if (database?.subModel) {
+                // subModel을 사용하여 임베딩 생성
+                // 일반 LLM은 임베딩을 생성하지 않으므로, 커스텀 임베딩 URL을 사용하거나
+                // 로컬 모델 서버의 임베딩 API를 호출해야 함
+                
+                // 로컬 모델 서버 임베딩 API 호출 시도
+                try {
+                    const localEmbeddingUrl = database.hypaCustomSettings?.url || 'http://localhost:10026/embeddings';
+                    const response = await fetch(localEmbeddingUrl, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(database?.hypaCustomSettings?.key?.trim()
+                                ? { Authorization: 'Bearer ' + database.hypaCustomSettings.key.trim() }
+                                : {}),
+                        },
+                        method: 'POST',
+                        body: JSON.stringify({
+                            input: inputs,
+                            model: localModels.models[this.model as keyof typeof localModels.models],
+                        }),
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const result: number[][] = [];
+                        for (let i = 0; i < data.data.length; i++) {
+                            result.push(data.data[i].embedding);
+                        }
+                        return result;
+                    }
+                } catch (error) {
+                    // 로컬 모델 서버 API 호출 실패 시 subModel 사용 안내
+                    console.warn(`Local model embedding API failed, falling back to custom embedding URL or OpenAI: ${error}`);
+                }
+            }
+            
+            // 로컬 모델 서버 API가 없는 경우 커스텀 임베딩 URL 사용 또는 에러
+            if (this.customEmbeddingUrl) {
+                // 커스텀 임베딩 URL 사용 (아래 코드에서 처리)
+            } else {
+                throw new Error(
+                    `Local model ${this.model} requires either a local embedding server API or custom embedding URL. ` +
+                    `Please configure hypaCustomSettings.url or use OpenAI/custom embedding models.`
+                );
+            }
         }
 
         let gf = null;
@@ -209,7 +259,8 @@ export class HypaProcessor {
         // 이미 있는 텍스트 필터링
         texts = texts.filter(v => {
             for (let i = 0; i < this.vectors.length; i++) {
-                if (this.vectors[i].content === v) {
+                const existingContent = this.vectors[i].content || this.vectors[i].text;
+                if (existingContent === v) {
                     return false;
                 }
             }
@@ -224,7 +275,8 @@ export class HypaProcessor {
 
         const memoryVectors: MemoryVector[] = vectors.map((embedding, idx) => ({
             content: texts[idx],
-            embedding,
+            text: texts[idx], // 하위 호환성
+            embedding: embedding as number[],
         }));
 
         // Redis에 저장
@@ -267,7 +319,7 @@ export class HypaProcessor {
             .sort((a, b) => (a.similarity > b.similarity ? -1 : 0));
 
         const result: [string, number][] = searches.map(search => [
-            memoryVectors[search.index].content,
+            memoryVectors[search.index].content || memoryVectors[search.index].text || '',
             search.similarity,
         ]);
 

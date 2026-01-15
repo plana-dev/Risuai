@@ -35,7 +35,7 @@ export type { sidebarToggle, sidebarToggleGroup, sidebarToggleGroupEnd } from '.
 export { jsonOutputTrimmer, simplifySchema, prebuiltAssetCommand } from './json';
 
 // 버퍼 및 비동기
-export { asBuffer, replaceAsync } from './buffer';
+export { asBuffer, blobToUint8Array, replaceAsync } from './buffer';
 
 // 동시성 제어
 export { Semaphore } from './concurrency';
@@ -47,9 +47,12 @@ export { encryptBuffer, decryptBuffer } from './crypto';
 export {
     getUserName,
     getUserIcon,
+    getUserIconProtrait,
     getPersonaPrompt,
     getAuthorNoteDefaultText,
-    findCharacterbyId
+    findCharacterbyId,
+    findCharacterIndexbyId,
+    getCharacterIndexObject
 } from './database';
 
 // 해시
@@ -64,3 +67,6 @@ export type { ImageType } from './image';
 
 // PNG 청크
 export { PngChunk } from './png-chunk';
+
+// 플레이스홀더 치환
+export { replacePlaceholders } from './placeholder';
