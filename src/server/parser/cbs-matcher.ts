@@ -3,7 +3,7 @@
  * matcher, initMatcher
  */
 
-import type { matcherArg, RegisterCallback } from '../../ts/cbs';
+import type { matcherArg, RegisterCallback } from '../cbs/types';
 
 export interface MatcherContext {
     calcString: (str: string) => number;

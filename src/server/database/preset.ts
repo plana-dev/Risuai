@@ -7,8 +7,8 @@
 
 import type { Database, botPreset } from './types';
 import { getDatabase, setDatabase } from './access';
-import { LLMFormat } from '../../ts/model/modellist';
-import { prebuiltPresets } from '../../ts/process/templates/templates';
+import { LLMFormat } from '../model/types';
+import { prebuiltPresets } from './defaults';
 import { presetTemplate } from './defaults';
 
 /**

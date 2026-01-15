@@ -9,6 +9,45 @@ import type { OpenAIChat } from '../types';
 import { requestChatData } from '../request';
 
 /**
+ * generateAIImage 호환 함수
+ * 원본: src/ts/process/stableDiff.ts의 generateAIImage
+ * 서버 사이드에서는 ComfyUI만 지원
+ * 
+ * 주의: database는 ProcessContext에서 가져와야 하지만, 호환성을 위해 선택적 파라미터로 받음
+ */
+export async function generateAIImage(
+    genPrompt: string,
+    currentChar: character,
+    neg: string,
+    returnSdData: string,
+    database?: Database
+): Promise<string | false> {
+    // database가 없으면 에러 반환
+    if (!database) {
+        console.error('[generateAIImage] Database is required');
+        return false;
+    }
+
+    // 현재는 ComfyUI만 지원
+    // TODO: WebUI, NovelAI 등 다른 provider 지원 추가
+    if (returnSdData === 'inlay') {
+        const result = await generateImageWithComfyUI(genPrompt, neg, currentChar, database);
+        if (result.success && result.image) {
+            return result.image;
+        }
+        return false;
+    } else {
+        // 일반 이미지 생성 (emotion 등)
+        const result = await generateImageWithComfyUI(genPrompt, neg, currentChar, database);
+        if (result.success && result.image) {
+            // TODO: emotion 저장 로직 추가
+            return result.image;
+        }
+        return false;
+    }
+}
+
+/**
  * ComfyUI 이미지 생성
  */
 export async function generateImageWithComfyUI(

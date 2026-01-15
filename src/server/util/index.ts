@@ -13,7 +13,8 @@ export {
     toLangName,
     isLastCharPunctuation,
     trimUntilPunctuation,
-    languageCodes
+    languageCodes,
+    calcString
 } from './string';
 
 // 랜덤 및 해시
@@ -56,3 +57,10 @@ export { hasher } from './hash';
 
 // Mutex
 export { Mutex } from './mutex';
+
+// 이미지 처리
+export { readImage, checkImageType, reencodeImage } from './image';
+export type { ImageType } from './image';
+
+// PNG 청크
+export { PngChunk } from './png-chunk';

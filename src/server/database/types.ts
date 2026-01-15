@@ -4,21 +4,62 @@
  * 원본: src/ts/storage/database.svelte.ts
  */
 
+import type { LLMFlags, LLMFormat, LLMTokenizer } from '../model/types';
+import type { OnnxModelFiles } from '../characters/types';
+import type { RisuModule } from '../cbs/types';
+
+// 타입 정의들 (원본에서 타입만 가져옴 - 런타임 의존성 없음)
+// TODO: 장기적으로는 공통 타입 패키지로 분리 권장
 import type { triggerscript as triggerscriptMain } from '../../ts/process/triggers';
-import type { OnnxModelFiles } from '../../ts/process/transformers';
-import type { RisuModule } from '../../ts/process/modules';
 import type { SerializableHypaV2Data } from '../../ts/process/memory/hypav2';
 import type { SerializableHypaV3Data } from '../../ts/process/memory/hypav3';
-import type { LLMFlags, LLMFormat, LLMTokenizer } from '../../ts/model/modellist';
 import type { HypaModel } from '../../ts/process/memory/hypamemory';
 import type { HypaV3Settings, HypaV3Preset } from '../../ts/process/memory/hypav3';
 import type { RisuPlugin } from '../../ts/plugins/plugins';
-import type { NAISettings } from '../../ts/process/models/nai';
-import type { ColorScheme } from '../../ts/gui/colorscheme';
 import type { PromptItem, PromptSettings } from '../../ts/process/prompt';
 import type { OobaChatCompletionRequestParams } from '../../ts/model/ooba';
 import type { OpenAIChat } from '../../ts/process/index.svelte';
-import type { Hotkey } from '../../ts/defaulthotkeys';
+
+// 타입 정의 (서버 사이드에서 사용)
+export interface ColorScheme {
+    bgcolor: string;
+    darkbg: string;
+    borderc: string;
+    selected: string;
+    draculared: string;
+    textcolor: string;
+    textcolor2: string;
+    darkBorderc: string;
+    darkbutton: string;
+    type: 'light' | 'dark';
+}
+
+export interface Hotkey {
+    key: string;
+    ctrl?: boolean;
+    shift?: boolean;
+    alt?: boolean;
+    action: string;
+}
+
+export interface NAISettings {
+    topK?: number;
+    topP?: number;
+    topA?: number;
+    tailFreeSampling?: number;
+    repetitionPenalty?: number;
+    repetitionPenaltyRange?: number;
+    repetitionPenaltySlope?: number;
+    repostitionPenaltyPresence?: number;
+    seperator?: string;
+    frequencyPenalty?: number;
+    presencePenalty?: number;
+    typicalp?: number;
+    starter?: string;
+    cfg_scale?: number;
+    mirostat_tau?: number;
+    mirostat_lr?: number;
+}
 
 export interface DynamicOutput {
     autoAdjustSchema: boolean

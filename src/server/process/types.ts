@@ -186,6 +186,10 @@ export interface ProcessContext {
     // 모델 정보
     modelInfo: LLMModel;
 
+    // Tokenizer
+    chatTokenizer: ChatTokenizer;
+    tokenizerContext: TokenizerContext;
+
     // 유틸리티 함수들
     getUserName: () => string;
     getUserIcon: () => string;

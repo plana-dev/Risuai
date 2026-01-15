@@ -10,6 +10,8 @@ import { getModelInfo } from '../model/modellist-server';
 import { getCharacter, getChat } from '../database';
 import type { Database, character, groupChat, Chat } from '../database';
 import type { LLMModel } from '../model/types';
+import { ChatTokenizer } from '../tokenizer/chat-tokenizer';
+import type { TokenizerContext } from '../tokenizer/types';
 import {
     getUserName as getUserNameUtil,
     getUserIcon as getUserIconUtil,
@@ -55,6 +57,22 @@ export async function createProcessContext(
 
     // 모델 정보 가져오기
     const modelInfo = await getModelInfo(database.aiModel, userId);
+
+    // TokenizerContext 생성
+    const tokenizerContext: TokenizerContext = {
+        userId,
+        database,
+        modelInfo,
+        customTokenizer: database.customTokenizer,
+        currentPluginProvider: database.currentPluginProvider,
+        googleClaudeTokenizing: database.googleClaudeTokenizing,
+        pluginTokenizer: undefined, // TODO: 플러그인 토크나이저 가져오기
+        useTokenizerCaching: database.useTokenizerCaching,
+    };
+
+    // ChatTokenizer 생성
+    const chatAdditionalTokens = database.aiModel.startsWith('gpt') ? 5 : 3;
+    const chatTokenizer = new ChatTokenizer(chatAdditionalTokens, 'name');
 
     // 선택된 캐릭터/채팅 인덱스 찾기
     const selectedCharIndex = database.characters.findIndex(c => c.chaId === characterId);
@@ -125,6 +143,8 @@ export async function createProcessContext(
         selectedCharIndex: selectedCharIndex >= 0 ? selectedCharIndex : undefined,
         selectedChatIndex: selectedChatIndex >= 0 ? selectedChatIndex : undefined,
         modelInfo,
+        chatTokenizer,
+        tokenizerContext,
         getUserName,
         getUserIcon,
         getPersonaPrompt,

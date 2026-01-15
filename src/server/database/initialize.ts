@@ -5,15 +5,12 @@
  * 서버 사이드에서는 데이터베이스 어댑터를 통해 초기화합니다.
  */
 
-import { checkNullish } from '../../ts/util';
-import { defaultMainPrompt, defaultJailbreak, defaultAutoSuggestPrompt } from '../../ts/storage/defaultPrompts';
-import { prebuiltNAIpresets } from '../../ts/process/templates/templates';
-import { defaultColorScheme } from '../../ts/gui/colorscheme';
-import { createHypaV3Preset } from '../../ts/process/memory/hypav3';
-import { defaultHotkeys } from '../../ts/defaulthotkeys';
+import { checkNullish } from '../util/basic';
+import { defaultMainPrompt, defaultJailbreak, defaultAutoSuggestPrompt, defaultColorScheme, defaultHotkeys, prebuiltNAIpresets } from './defaults';
+import { createHypaV3Preset } from '../process/memory/hypa-v3-preset';
 import type { Database } from './types';
 import { defaultAIN, defaultOoba, presetTemplate, defaultSdDataFunc } from './defaults';
-import { LLMFormat } from '../../ts/model/modellist';
+import { LLMFormat } from '../model/types';
 
 /**
  * 안전한 구조화된 클론 함수

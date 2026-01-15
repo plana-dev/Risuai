@@ -49,5 +49,17 @@ export { processScript, processScriptFull, resetScriptCache } from './scripts';
 export { runImageEmbedding } from './image-embedding';
 
 // File Processing
-export { uploadInlayAsset, getInlayAsset, processMultisendFile } from './file-processing';
+export { uploadInlayAsset, getInlayAsset, processMultisendFile, writeInlayImage } from './file-processing';
 export type { InlayAsset, FileProcessResult } from './types';
+
+// Inlay Screen
+export { runInlayScreen, updateInlayScreen } from './inlay-screen';
+
+// Reroll
+export { Prereroll, PreUnreroll, addRerolls } from './reroll';
+
+// TTS
+export { sayTTS, getElevenTTSVoices, getVOICEVOXVoices, getNovelAIVoices, FixNAITTS, oaiVoices } from './tts';
+
+// Command
+export { processMultiCommand } from './command';

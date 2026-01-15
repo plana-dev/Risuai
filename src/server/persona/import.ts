@@ -8,8 +8,8 @@ import type { Database } from '../database';
 import type { PersonaCard, PersonaImportResult } from './types';
 import { getDatabase, setDatabase } from '../database';
 import { getAssetService } from '../asset-service';
-import { reencodeImage } from '../../ts/process/files/inlays';
-import { PngChunk } from '../../ts/pngChunk';
+import { reencodeImage } from '../util/image';
+import { PngChunk } from '../util/png-chunk';
 // AppendableBuffer는 PngChunk에서 사용되므로 별도 import 불필요
 
 /**

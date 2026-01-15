@@ -3,7 +3,7 @@
  * risuChatParser
  */
 
-import type { matcherArg } from '../../ts/cbs';
+import type { matcherArg } from '../cbs/types';
 import type { RisuChatParserArg, blockMatch } from './types';
 import { parseArray } from './utility';
 import { legacyBlockMatcher, blockStartMatcher, blockEndMatcher, type BlockMatcherContext } from './cbs-blocks';

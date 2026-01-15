@@ -235,6 +235,40 @@ export class RedisService {
   }
 
   /**
+   * Reroll 데이터 저장 (TTL: 1시간)
+   */
+  async setRerolls(userId: string, genId: string, values: string[]): Promise<void> {
+    const key = `reroll:${userId}:${genId}`;
+    await this.client!.setex(key, 3600, JSON.stringify(values));
+  }
+
+  /**
+   * Reroll 데이터 조회
+   */
+  async getRerolls(userId: string, genId: string): Promise<string[] | null> {
+    const key = `reroll:${userId}:${genId}`;
+    const data = await this.client!.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+
+  /**
+   * Reroll 인덱스 저장 (TTL: 1시간)
+   */
+  async setRerollIndex(userId: string, genId: string, index: number): Promise<void> {
+    const key = `reroll:${userId}:${genId}:index`;
+    await this.client!.setex(key, 3600, index.toString());
+  }
+
+  /**
+   * Reroll 인덱스 조회
+   */
+  async getRerollIndex(userId: string, genId: string): Promise<number | null> {
+    const key = `reroll:${userId}:${genId}:index`;
+    const data = await this.client!.get(key);
+    return data ? parseInt(data, 10) : null;
+  }
+
+  /**
    * 클라이언트 인스턴스 반환 (내부 사용)
    */
   getClient(): Redis | null {

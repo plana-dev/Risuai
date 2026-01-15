@@ -2,8 +2,14 @@
  * 메인 채팅 처리 함수
  * 원본: src/ts/process/index.svelte.ts의 sendChat 함수
  * 
- * TODO: 전체 구현 필요 - 현재는 기본 구조만 제공
- * 파일이 매우 크므로 (1971 lines) 단계적으로 구현 필요
+ * 주요 기능:
+ * - 프롬프트 템플릿 처리
+ * - 토큰 계산 및 관리
+ * - 메모리 시스템 통합
+ * - 스트리밍 처리
+ * - 후처리 로직 (runInlayScreen, addRerolls, sayTTS)
+ * - Auto Continue Chat
+ * - IGP (Image Generation Prompt) 처리
  */
 
 import type { character, Chat, Database, MessageGenerationInfo, MessagePresetInfo } from '../../database';
@@ -29,7 +35,7 @@ import { hypaMemoryV2 } from '../memory/hypa-v2';
 import { hypaMemoryV3 } from '../memory/hypa-v3';
 // Util functions are now available via ProcessContext
 // import { getPersonaPrompt, getUserName, getAuthorNoteDefaultText, findCharacterbyId, parseToggleSyntax, prebuiltAssetCommand } from '../../util';
-import { parseToggleSyntax, prebuiltAssetCommand, trimUntilPunctuation } from '../../util';
+import { parseToggleSyntax, prebuiltAssetCommand, trimUntilPunctuation, isLastCharPunctuation } from '../../util';
 import { additionalInformations } from '../auxiliary/additional-info';
 import { getInlayAsset } from '../auxiliary/file-processing';
 import { getGenerationModelString } from '../auxiliary/model-string';
@@ -37,9 +43,14 @@ import { getModuleAssets, getModuleToggles, getModuleLorebooks } from '../auxili
 import { readImage } from '../../util/image';
 import { asBuffer } from '../../util';
 import { getModelInfo } from '../../model/modellist-server';
-import { LLMFlags } from '../../model/modellist';
+import { LLMFlags } from '../../model/types';
 import { runImageEmbedding } from '../auxiliary/image-embedding';
 import { HypaProcessor } from '../memory/hypa-processor';
+import { runInlayScreen } from '../auxiliary/inlay-screen';
+import { addRerolls } from '../auxiliary/reroll';
+import { sayTTS } from '../auxiliary/tts';
+import { groupOrder } from '../auxiliary/group';
+import type { groupChat } from '../../database';
 
 /**
  * sendChat 함수
@@ -64,9 +75,8 @@ export async function sendChat(
         };
     }
 
-    // TokenizerContext는 context에서 가져오거나 생성
-    // TODO: ProcessContext에 tokenizerContext 추가 필요
-    const tokenizerContext = context as any; // 임시 처리
+    // TokenizerContext는 context에서 가져옴
+    const tokenizerContext = context.tokenizerContext;
 
     const abortSignal = arg.signal ?? new AbortController().signal;
 
@@ -116,9 +126,16 @@ export async function sendChat(
     }
 
     // 통계 업데이트
+    database.statics = database.statics || { messages: 0, imports: 0 };
     database.statics.messages += 1;
     const nowChatroom = currentCharacter;
     nowChatroom.lastInteraction = Date.now();
+    
+    // Chat ID 할당
+    currentChat.message = currentChat.message.map((v) => {
+        v.chatId = v.chatId ?? uuidv4();
+        return v;
+    });
 
     let currentChar: character;
     let calculatedChatTokens = 0;
@@ -130,13 +147,77 @@ export async function sendChat(
 
     // 그룹 채팅 처리
     if (nowChatroom.type === 'group') {
-        // TODO: 그룹 채팅 처리
-        return {
-            success: false,
-            error: 'Group chat not implemented yet',
-        };
+        const groupChatroom = nowChatroom as groupChat;
+        
+        if (chatProcessIndex === -1) {
+            // 모든 활성 캐릭터에 대해 순서대로 처리
+            const charNames = groupChatroom.characters.map((v) => {
+                const char = findCharacterbyIdwithCache(v);
+                return char ? char.name : '';
+            });
+
+            const messages = groupChatroom.chats[groupChatroom.chatPage].message;
+            const lastMessage = messages[messages.length - 1];
+            
+            // 활성 캐릭터 필터링 및 순서 결정
+            let order = groupChatroom.characters.map((v, i) => {
+                return {
+                    id: v,
+                    talkness: groupChatroom.characterActive[i] ? (groupChatroom.characterTalks[i] || 0) : -1,
+                    index: i
+                };
+            }).filter((v) => {
+                return v.talkness > 0;
+            });
+            
+            // orderByOrder가 false이면 groupOrder로 순서 결정
+            if (!groupChatroom.orderByOrder) {
+                const lastMessageData = lastMessage?.data || '';
+                order = groupOrder(order, lastMessageData, context).filter((v) => {
+                    // 마지막 메시지를 보낸 캐릭터는 제외
+                    if (v.id === lastMessage?.saying) {
+                        return false;
+                    }
+                    return true;
+                });
+            }
+            
+            // 각 캐릭터에 대해 sendChat 호출
+            const results: SendChatResult[] = [];
+            for (let i = 0; i < order.length; i++) {
+                const r = await sendChat(
+                    context,
+                    order[i].index,
+                    {
+                        ...arg,
+                        chatAdditonalTokens: calculatedChatTokens,
+                        signal: abortSignal
+                    }
+                );
+                if (!r.success) {
+                    return r;
+                }
+                results.push(r);
+            }
+            
+            // 모든 결과를 합쳐서 반환
+            return {
+                success: true,
+                generationInfo: results[results.length - 1]?.generationInfo || {} as MessageGenerationInfo,
+                resendChat: results.some(r => r.resendChat),
+                emoChanged: results.some(r => r.emoChanged),
+            };
+        } else {
+            // 특정 캐릭터만 처리
+            const charId = groupChatroom.characters[chatProcessIndex];
+            const char = findCharacterbyIdwithCache(charId);
+            if (!char) {
+                return throwError(`cannot find character: ${charId}`);
+            }
+            currentChar = char;
+        }
     } else {
-        currentChar = nowChatroom;
+        currentChar = nowChatroom as character;
     }
 
     let chatAdditonalTokens = arg.chatAdditonalTokens ?? calculatedChatTokens;
@@ -221,6 +302,15 @@ export async function sendChat(
         unformated.postEverything.push({
             role: 'system',
             content: `<instruction> - before respond everything, Think step by step as a ai assistant how would you respond inside <Thoughts> xml tag. this must be less than 5 paragraphs.</instruction>`,
+        });
+    }
+    
+    // 그룹 채팅 시스템 메시지
+    if (nowChatroom.type === 'group') {
+        const systemMsg = `[Write the next reply only as ${currentChar.name}]`;
+        unformated.postEverything.push({
+            role: 'system',
+            content: systemMsg
         });
     }
 
@@ -564,7 +654,7 @@ export async function sendChat(
 
     // 예제 메시지
     const examples = exampleMessage(currentChar, context.getUserName(), context);
-    let chats: OpenAIChat[] = examples;
+    let chats: OpenAIChat[] = JSON.parse(JSON.stringify(examples)); // safeStructuredClone 대체
 
     if (!database.aiModel.startsWith('novelai') || database.promptSettings?.trimStartNewChat) {
         chats.push({
@@ -576,16 +666,20 @@ export async function sendChat(
 
     // 첫 메시지
     if (nowChatroom.type !== 'group') {
-        const firstMsg = currentChatData.fmIndex === -1 ? nowChatroom.firstMessage : nowChatroom.alternateGreetings[currentChatData.fmIndex];
+        const firstMsg = currentChatData.fmIndex === -1 
+            ? nowChatroom.firstMessage 
+            : (nowChatroom.alternateGreetings?.[currentChatData.fmIndex] || nowChatroom.firstMessage);
 
+        const processedFirstMsg = await processScript(
+            nowChatroom,
+            risuChatParser(firstMsg, { chara: currentChar }, parserContexts),
+            'editprocess',
+            context
+        );
+        
         const chat: OpenAIChat = {
             role: 'assistant',
-            content: await processScript(
-                nowChatroom,
-                risuChatParser(firstMsg, { chara: currentChar }, parserContexts),
-                'editprocess',
-                context
-            ),
+            content: processedFirstMsg,
         };
 
         if (usingPromptTemplate && database.promptSettings?.sendName) {
@@ -600,9 +694,9 @@ export async function sendChat(
         chat: currentChatData,
         database,
         tokenizerContext,
-        userId: context.userId || '',
-        characterId: context.currentCharacterId || '',
-        chatId: context.currentChatId || '',
+        userId: context.userId,
+        characterId: context.characterId,
+        chatId: context.chatId,
     });
 
     if (triggerResult) {
@@ -667,7 +761,7 @@ export async function sendChat(
         }
 
         let multimodal: any[] = [];
-        const modelinfo = await getModelInfo(database.aiModel, userId);
+        const modelinfo = await getModelInfo(database.aiModel, context.userId);
         if (inlays.length > 0) {
             for (const inlay of inlays) {
                 const inlayName = inlay.replace('{{inlayed::', '').replace('{{inlay::', '').replace('}}', '');
@@ -698,6 +792,30 @@ export async function sendChat(
         }
 
         let role: 'user' | 'assistant' | 'system' = msg.role === 'user' ? 'user' : 'assistant';
+        
+        // 그룹 채팅 메시지 포맷팅
+        if (
+            (nowChatroom.type === 'group' && msg.saying && findCharacterbyIdwithCache(msg.saying)?.chaId !== currentChar.chaId) ||
+            (nowChatroom.type === 'group' && database.groupOtherBotRole === 'assistant') ||
+            (usingPromptTemplate && database.promptSettings?.sendName)
+        ) {
+            const sayingChar = msg.saying ? findCharacterbyIdwithCache(msg.saying) : null;
+            if (sayingChar) {
+                const form = database.groupTemplate || `<{{char}}'s Message>\n{{slot}}\n</{{char}}'s Message>`;
+                formatedChat = risuChatParser(form, { chara: sayingChar }, parserContexts).replace('{{slot}}', formatedChat);
+            }
+            switch (database.groupOtherBotRole) {
+                case 'user':
+                case 'assistant':
+                case 'system':
+                    role = database.groupOtherBotRole;
+                    break;
+                default:
+                    role = 'assistant';
+                    break;
+            }
+        }
+        
         let thoughts: string[] = [];
         const maxThoughtDepth = database.promptSettings?.maxThoughtTagDepth ?? -1;
         formatedChat = formatedChat.replace(/<Thoughts>(.+)<\/Thoughts>/gms, (match, p1) => {
@@ -1243,7 +1361,7 @@ export async function sendChat(
     const generationInfo: MessageGenerationInfo = {
         model: generationModel,
         generationId: generationId,
-        inputTokens: 0, // TODO: 계산
+        inputTokens: inputTokens,
         outputTokens: database.maxResponse,
         maxContext: maxContextTokens,
         stageTiming: {
@@ -1256,11 +1374,18 @@ export async function sendChat(
 
     const req = await requestChatData(
         {
-            formated: chats,
-            bias: {},
+            formated: formated, // formated 배열 사용
+            bias: biases,
             useStreaming: true,
             noMultiGen: true,
             continue: arg.continue,
+            currentChar: currentChar,
+            isGroupChat: nowChatroom.type === 'group',
+            chatId: generationId,
+            imageResponse: database.outputImageModal,
+            previewBody: arg.previewPrompt,
+            escape: nowChatroom.type === 'character' && nowChatroom.escapeOutput,
+            rememberToolUsage: database.rememberToolUsage,
         },
         'model',
         database,
@@ -1358,8 +1483,8 @@ export async function sendChat(
             }
         }
         
-        // addRerolls 처리 (나중에 구현)
-        // addRerolls(generationId, Object.values(lastResponseChunk));
+        // addRerolls 처리
+        await addRerolls(generationId, Object.values(lastResponseChunk), userId);
         
         // runCurrentChatFunction 처리
         currentChatData = runCurrentChatFunction(currentChatData);
@@ -1369,9 +1494,9 @@ export async function sendChat(
             chat: currentChatData,
             database,
             tokenizerContext,
-            userId: context.userId || '',
-            characterId: context.currentCharacterId || '',
-            chatId: context.currentChatId || '',
+            userId: context.userId,
+            characterId: context.characterId,
+            chatId: context.chatId,
         });
         
         if (outputTriggerResult) {
@@ -1390,18 +1515,27 @@ export async function sendChat(
             return chat;
         });
         
-        // runInlayScreen 처리 (나중에 구현)
-        // const inlayr = runInlayScreen(currentChar, currentChatData.message[msgIndex].data);
-        // currentChatData.message[msgIndex].data = inlayr.text;
-        // if (inlayr.promise) {
-        //     const t = await inlayr.promise;
-        //     currentChatData.message[msgIndex].data = t;
-        // }
+        // runInlayScreen 처리
+        const inlayr = await runInlayScreen(currentChar, currentChatData.message[msgIndex].data, database, userId);
+        currentChatData.message[msgIndex].data = inlayr.text;
+        if (inlayr.promise) {
+            const t = await inlayr.promise;
+            currentChatData.message[msgIndex].data = t;
+            await updateContextChat(context, (chat) => {
+                chat.message[msgIndex].data = t;
+                return chat;
+            });
+        }
         
-        // TTS 처리 (나중에 구현)
-        // if (database.ttsAutoSpeech) {
-        //     await sayTTS(currentChar, result);
-        // }
+        // TTS 처리
+        if (database.ttsAutoSpeech) {
+            const ttsResult = await sayTTS(currentChar, result, database);
+            // 서버 사이드에서는 오디오 데이터를 반환만 하고, 실제 재생은 클라이언트에서 처리
+            if (ttsResult.audioData) {
+                // TODO: 클라이언트로 오디오 데이터 전송 (WebSocket 또는 응답에 포함)
+                console.log('[TTS] Audio data generated:', ttsResult.audioData.substring(0, 50) + '...');
+            }
+        }
     } else if (req.type === 'success' || req.type === 'multiline') {
         // 비스트리밍 처리
         const msgs = req.type === 'success' 
@@ -1444,9 +1578,13 @@ export async function sendChat(
             result = result2.data;
             emoChanged = result2.emoChanged;
             
-            // runInlayScreen 처리 (나중에 구현)
-            // const inlayResult = runInlayScreen(currentChar, result);
-            // result = inlayResult.text;
+            // runInlayScreen 처리
+            const inlayResult = await runInlayScreen(currentChar, result, database, userId);
+            result = inlayResult.text;
+            if (inlayResult.promise) {
+                const processedResult = await inlayResult.promise;
+                result = processedResult;
+            }
             
             if (i === 0 && arg.continue) {
                 currentChatData.message[msgIndex] = {
@@ -1467,8 +1605,10 @@ export async function sendChat(
             mrerolls.push(result);
         }
         
-        // addRerolls 처리 (나중에 구현)
-        // addRerolls(generationId, mrerolls);
+        // addRerolls 처리
+        if (mrerolls.length > 0) {
+            await addRerolls(generationId, mrerolls, userId);
+        }
         
         // runCurrentChatFunction 처리
         currentChatData = runCurrentChatFunction(currentChatData);
@@ -1478,9 +1618,9 @@ export async function sendChat(
             chat: currentChatData,
             database,
             tokenizerContext,
-            userId: context.userId || '',
-            characterId: context.currentCharacterId || '',
-            chatId: context.currentChatId || '',
+            userId: context.userId,
+            characterId: context.characterId,
+            chatId: context.chatId,
         });
         
         if (outputTriggerResult) {
@@ -1497,6 +1637,15 @@ export async function sendChat(
             chat.message = currentChatData.message;
             return chat;
         });
+        
+        // TTS 처리
+        if (database.ttsAutoSpeech && result) {
+            const ttsResult = await sayTTS(currentChar, result, database);
+            if (ttsResult.audioData) {
+                // TODO: 클라이언트로 오디오 데이터 전송
+                console.log('[TTS] Audio data generated');
+            }
+        }
     }
     
     // 최종 데이터베이스 저장
@@ -1531,6 +1680,80 @@ export async function sendChat(
     // 모델 정보 업데이트
     if (req.model) {
         generationInfo.model = getGenerationModelString(database, req.model);
+    }
+    
+    // Auto Continue Chat 처리
+    let needsAutoContinue = false;
+    // tokenize 함수는 문자열과 context를 받음
+    // ChatTokenizer의 tokenizeChat 메서드 사용
+    const resultTokens = await context.chatTokenizer.tokenizeChat(
+        { role: 'assistant', content: result },
+        tokenizerContext
+    ) + (arg.usedContinueTokens || 0);
+    
+    if (database.autoContinueMinTokens > 0 && resultTokens < database.autoContinueMinTokens) {
+        needsAutoContinue = true;
+    }
+    
+    if (database.autoContinueChat && !isLastCharPunctuation(result)) {
+        // 결과가 구두점이나 특수 문자로 끝나지 않으면 자동 계속
+        needsAutoContinue = true;
+    }
+    
+    if (needsAutoContinue) {
+        // 재귀적으로 sendChat 호출 (continue 모드)
+        return await sendChat(
+            context,
+            chatProcessIndex,
+            {
+                ...arg,
+                continue: true,
+                usedContinueTokens: resultTokens,
+            }
+        );
+    }
+    
+    // IGP (Image Generation Prompt) 처리
+    if (database.igpPrompt) {
+        const igp = risuChatParser(database.igpPrompt, { chara: currentChar }, parserContexts);
+        if (igp) {
+            const igpFormated = parseChatML(igp, parserContexts);
+            if (igpFormated && igpFormated.length > 0) {
+                const rq = await requestChatData(
+                    {
+                        formated: igpFormated,
+                        bias: {},
+                    },
+                    'emotion',
+                    database,
+                    abortSignal,
+                    userId
+                );
+                
+                if (rq.type === 'success' && currentChatData.message.length > 0) {
+                    const lastMessage = currentChatData.message[currentChatData.message.length - 1];
+                    lastMessage.data += rq.result;
+                    await updateContextChat(context, (chat) => {
+                        if (chat.message.length > 0) {
+                            chat.message[chat.message.length - 1].data = lastMessage.data;
+                        }
+                        return chat;
+                    });
+                }
+            }
+        }
+    }
+    
+    // resendChat 처리
+    if (resendChat) {
+        return await sendChat(
+            context,
+            chatProcessIndex,
+            {
+                ...arg,
+                signal: abortSignal,
+            }
+        );
     }
     
     return {

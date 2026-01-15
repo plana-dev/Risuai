@@ -3,8 +3,20 @@
  */
 
 import type { character, customscript, loreBook, loreSettings, triggerscript, groupChat } from '../database';
-import type { OnnxModelFiles } from '../../ts/process/transformers';
 import type { CharacterCardV3, LorebookEntry } from '@risuai/ccardlib';
+
+/**
+ * OnnxModelFiles 타입
+ * 원본: src/ts/process/transformers.ts
+ * 서버 사이드에서는 transformers 모듈이 제한적이므로 타입만 정의
+ */
+export interface OnnxModelFiles {
+    tokenizer?: string;
+    tokenizer_config?: string;
+    config?: string;
+    model?: string;
+    [key: string]: string | undefined;
+}
 
 export interface CharacterCardV2Risu {
     spec: 'chara_card_v2'

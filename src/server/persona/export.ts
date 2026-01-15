@@ -6,8 +6,8 @@
 import type { Database } from '../database';
 import type { PersonaCard, PersonaImageResult } from './types';
 import { readPersonaImage, createDefaultPersonaImage } from './image';
-import { reencodeImage } from '../../ts/process/files/inlays';
-import { PngChunk } from '../../ts/pngChunk';
+import { reencodeImage } from '../util/image';
+import { PngChunk } from '../util/png-chunk';
 import { sleep } from '../util';
 
 /**

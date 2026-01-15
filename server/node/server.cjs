@@ -610,6 +610,10 @@ app.get('/api/oauth_callback', async (req, res) => {
             
 })
 
+// 채팅 API 라우트
+const chatRoutes = require('./routes/chat');
+app.use('/api/chat', chatRoutes);
+
 async function getHttpsOptions() {
 
     const keyPath = path.join(sslPath, 'server.key');

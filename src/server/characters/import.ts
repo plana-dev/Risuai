@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { character, loreBook, loreSettings, customscript, triggerscript } from '../database';
 import { defaultSdDataFunc } from '../database';
 import type { CharacterCardV2Risu, CharacterCardV3 } from './types';
-import type { OnnxModelFiles } from '../../ts/process/transformers';
+import type { OnnxModelFiles } from './types';
 import { convertCharbook } from './utils';
 import type { ImportCharacterProcessArg } from './types';
 

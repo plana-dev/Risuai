@@ -3,7 +3,7 @@
  * legacyBlockMatcher, blockStartMatcher, blockEndMatcher
  */
 
-import type { matcherArg } from '../../ts/cbs';
+import type { matcherArg } from '../cbs/types';
 import type { blockMatch } from './types';
 import { parseArray, trimLines, risuEscape } from './utility';
 

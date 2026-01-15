@@ -9,7 +9,7 @@ import { getRedisService } from '../../redis-service';
 import { getDatabaseAdapter } from '../../database-adapter';
 import type { Database, character, Chat, triggerscript } from '../../database';
 import { v4 as uuidv4 } from 'uuid';
-import { Mutex } from '../../../ts/mutex';
+import { Mutex } from '../../util/mutex';
 import { risuChatParser, hasher } from '../../parser';
 import type { RisuChatParserContext } from '../../parser/cbs-parser';
 import type { MatcherContext } from '../../parser/cbs-matcher';
@@ -19,14 +19,13 @@ import type { OpenAIChat } from '../types';
 import type { TokenizerContext } from '../../tokenizer';
 import { HypaProcessor } from '../memory/hypa-processor';
 import { requestChatData } from '../request';
-// TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
-import { generateAIImage } from '../../../ts/process/stableDiff';
+import { generateImageWithComfyUI } from '../auxiliary/image-generation';
 import { writeInlayImage, getInlayAsset } from '../auxiliary/file-processing';
 import { getModuleLorebooks } from '../auxiliary/modules';
 import { loadLoreBookV3Prompt, type LorebookLoadContext } from '../lorebook';
 import { getPersonaPrompt, getUserName, getUserIcon } from '../../util';
 import { readImage } from '../../util/image';
-import { asBuffer } from '../../../ts/util';
+import { asBuffer } from '../../util/buffer';
 import { setCharacter } from '../../database/access';
 
 interface LuaEngineState {
@@ -346,19 +345,15 @@ export async function runScripted(
     },
     matcher: {
       calcString: (str: string) => {
-        // TODO: 서버 사이드 calcString 구현
-        const { calcString } = require('../../../ts/process/infunctions');
-        return calcString(str);
+        const { calcString: calcStringUtil } = require('../../util/string');
+        return calcStringUtil(str, finalGetVar, (key: string) => dbData.globalVars?.[key] || '0');
       },
       getMatcherMap: () => {
-        // TODO: 서버 사이드 getMatcherMap 구현
-        const { getMatcherMap } = require('../../../ts/cbs');
+        const { getMatcherMap } = require('../../cbs');
         return getMatcherMap();
       },
       initMatcher: () => {
-        // TODO: 서버 사이드 initMatcher 구현
-        const { initMatcher } = require('../../../ts/cbs');
-        initMatcher();
+        // initMatcher는 이미 초기화되어 있음
       },
     },
     block: {
@@ -402,12 +397,6 @@ export async function runScripted(
 
   if (!chatData) {
     throw new Error('Chat not found');
-  }
-
-  // 데이터베이스 로드
-  let dbData = database;
-  if (!dbData) {
-    dbData = await db.loadDatabase(userId);
   }
 
   const engineState = await getOrCreateEngineState(userId, characterId, chatId, mode);
@@ -734,8 +723,12 @@ export async function runScripted(
         if (!char || char.type !== 'character') {
           return 'Error: Character is a group or invalid';
         }
-        // TODO: 서버 사이드 이미지 생성 구현
-        const gen = await generateAIImage(value, char, negValue, 'inlay');
+        // 서버 사이드 이미지 생성
+        // database는 runScripted의 파라미터에서 가져옴 (closure로 접근)
+        if (!dbData) {
+          return 'Error: Database is required for image generation';
+        }
+        const gen = await generateAIImage(value, char, negValue, 'inlay', dbData);
         if (!gen) {
           return 'Error: Image generation failed';
         }

@@ -11,22 +11,21 @@ import type { triggerMode, triggerscript, additonalSysPrompt, TriggerRunResult }
 import { checkAllConditions, type ConditionCheckContext } from './conditions';
 import { risuChatParser } from '../../parser';
 import { createParserContexts } from '../parser-context';
-import { parseKeyValue } from '../../../ts/util';
+import { parseKeyValue } from '../../util/parse';
 import { runScripted } from '../scripting';
 import type { TokenizerContext } from '../../tokenizer';
-// TODO: 아래 함수들을 서버 사이드로 마이그레이션 필요
 import { getModuleTriggers } from '../auxiliary/modules';
-import { processMultiCommand } from '../../../ts/process/command';
+import { processMultiCommand } from '../auxiliary/command';
 import { requestChatData } from '../request';
 import { HypaProcessor } from '../memory/hypa-processor';
-import { generateAIImage } from '../../../ts/process/stableDiff';
+import { generateImageWithComfyUI } from '../auxiliary/image-generation';
 import { writeInlayImage } from '../auxiliary/file-processing';
 import { parseChatML } from '../../parser';
 import type { OpenAIChat } from '../types';
 import { getDatabaseAdapter } from '../../database-adapter';
 import { setCharacter } from '../../database/access';
 import { tokenize } from '../../tokenizer';
-import { calcString } from '../../../ts/process/infunctions';
+import { calcString } from '../../util/string';
 
 /**
  * 트리거 실행 인자
@@ -437,7 +436,8 @@ export async function runTrigger(
                     }
                     const effectValue = risuChatParser(effect.value, { chara: char }, parserContexts);
                     const negValue = risuChatParser(effect.negValue, { chara: char }, parserContexts);
-                    const gen = await generateAIImage(effectValue, char, negValue, 'inlay');
+                    const db = arg.database || (await getDatabaseAdapter().loadUserDatabase(arg.userId!));
+                    const gen = await generateAIImage(effectValue, char, negValue, 'inlay', db);
                     if (!gen) {
                         const inputVar = risuChatParser(effect.inputVar, { chara: char }, parserContexts);
                         setVar(inputVar, 'Error: Image generation failed');
@@ -800,7 +800,8 @@ export async function runTrigger(
                         effect.negValueType === 'value'
                             ? risuChatParser(effect.negValue, { chara: char }, parserContexts)
                             : getVar(risuChatParser(effect.negValue, { chara: char }, parserContexts));
-                    const gen = await generateAIImage(effectValue, char, negValue, 'inlay');
+                    const db = arg.database || (await getDatabaseAdapter().loadUserDatabase(arg.userId!));
+                    const gen = await generateAIImage(effectValue, char, negValue, 'inlay', db);
                     if (!gen) {
                         const outputVar = risuChatParser(effect.outputVar, { chara: char }, parserContexts);
                         setVar(outputVar, 'Error: Image generation failed');

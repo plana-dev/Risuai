@@ -10,7 +10,41 @@ import { tikJS } from './tiktoken';
 import { tokenizeWebTokenizers } from './web-tokenizers';
 import { gemmaTokenize } from './gemma';
 import { tokenizeGoogleCloud } from './google-cloud';
-import { tokenizeGGUFModel } from '../../ts/process/models/local';
+/**
+ * GGUF 모델 토크나이징
+ * 원본: src/ts/process/models/local.ts의 tokenizeGGUFModel
+ * 서버 사이드에서는 로컬 모델 서버 API를 호출
+ */
+async function tokenizeGGUFModel(prompt: string, modelPath?: string, maxContext?: number, authKey?: string): Promise<number[]> {
+    // 서버 사이드에서는 로컬 모델 서버가 실행 중이어야 함
+    // 기본적으로 localhost:10026에서 실행되는 로컬 서버를 호출
+    try {
+        const key = authKey || 'default'; // TODO: 실제 인증 키 가져오기
+        const response = await fetch("http://localhost:10026/llamacpp/tokenize", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-risu-auth": key
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                n_ctx: maxContext || 4096,
+                model_path: modelPath || ''
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Local model server error: ${response.statusText}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        // Fallback: tiktoken 사용
+        console.warn('[Tokenizer] tokenizeGGUFModel failed, using fallback tokenizer:', error);
+        const { tikJS } = await import('./tiktoken');
+        return await tikJS(prompt, 'cl100k_base');
+    }
+}
 
 /**
  * 특정 tokenizer 타입으로 인코딩
@@ -143,7 +177,8 @@ export async function encode(
         } else if (modelInfo.tokenizer === LLMTokenizer.Llama) {
             result = await tokenizeWebTokenizers(data, 'llama');
         } else if (modelInfo.tokenizer === LLMTokenizer.Local) {
-            result = await tokenizeGGUFModel(data);
+            // Local 모델 토크나이징 (로컬 서버 필요)
+            result = await tokenizeGGUFModel(data, undefined, database.maxContext);
         } else if (modelInfo.tokenizer === LLMTokenizer.tiktokenO200Base) {
             result = await tikJS(data, 'o200k_base');
         } else if (modelInfo.tokenizer === LLMTokenizer.GoogleCloud && googleClaudeTokenizing) {

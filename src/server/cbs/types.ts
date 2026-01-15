@@ -3,10 +3,42 @@
  * 서버 사이드에서 사용할 수 있도록 타입만 정의
  */
 
-import type { Database, character, loreBook } from '../database';
-import type { CbsConditions } from '../../ts/parser.svelte';
-import type { RisuModule } from '../../ts/process/modules';
-import type { LLMModel } from '../../ts/model/modellist';
+import type { Database, character, loreBook, customscript, triggerscript } from '../database';
+import type { LLMModel } from '../model/types';
+
+/**
+ * CBS 조건 타입
+ * 원본: src/ts/parser.svelte.ts
+ */
+export type CbsConditions = {
+    firstmsg?: boolean;
+    chatRole?: string;
+}
+
+/**
+ * RisuModule 타입
+ * 원본: src/ts/process/modules.ts
+ */
+export interface MCPModule {
+    url: string;
+}
+
+export interface RisuModule {
+    name: string;
+    description: string;
+    lorebook?: loreBook[];
+    regex?: customscript[];
+    cjs?: string;
+    trigger?: triggerscript[];
+    id: string;
+    lowLevelAccess?: boolean;
+    hideIcon?: boolean;
+    backgroundEmbedding?: string;
+    assets?: [string, string, string][];
+    namespace?: string;
+    customModuleToggle?: string;
+    mcp?: MCPModule;
+}
 
 export type matcherArg = {
     chatID: number,
